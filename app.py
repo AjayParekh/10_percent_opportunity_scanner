@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import time
+import concurrent.futures
 
 # --- 1. PAGE SETUP & UI LAYER ---
 st.set_page_config(page_title="Opportunity Scanner", layout="wide", page_icon="🏛️")
@@ -171,7 +172,7 @@ def fetch_annexure_all_details(bse_code: str):
                         if label not in data: data[label] = val
                             
     except Exception as e:
-        st.error(f"Error scraping TheAnnexure for {bse_code}: {e}")
+        pass # Silently skip if a page fails
         
     return data
 
@@ -181,7 +182,7 @@ st.markdown(
     """
     <div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>
     <div class="omc-title">🏛️ Opportunity Scanner</div>
-    <div class="omc-subtitle">Real-time scraped data, strictly limited to the selected columns.</div>
+    <div class="omc-subtitle">Real-time scraped data. Over 100 companies tracked.</div>
     """,
     unsafe_allow_html=True
 )
@@ -189,7 +190,122 @@ st.markdown(
 # --- ADD MORE COMPANIES HERE LATER ---
 COMPANIES = [
     {"name": "Reliance Industries Ltd", "ticker": "RELIANCE", "bse": "500325", "industry": "Integrated Energy / O2C", "type": "Private"},
-    {"name": "Bank of India",            "ticker": "BANKINDIA", "bse": "532149", "industry": "Public Sector Bank", "type": "Government (PSU)"}
+    {"name": "Bank of India", "ticker": "BANKINDIA", "bse": "532149", "industry": "Public Sector Bank", "type": "Government (PSU)"},
+    {"name": "Tata Consultancy Services", "ticker": "TCS", "bse": "532540", "industry": "IT Services", "type": "Private"},
+    {"name": "HDFC Bank Ltd", "ticker": "HDFCBANK", "bse": "500180", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "ICICI Bank Ltd", "ticker": "ICICIBANK", "bse": "532174", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "Infosys Ltd", "ticker": "INFY", "bse": "500209", "industry": "IT Services", "type": "Private"},
+    {"name": "Bharti Airtel Ltd", "ticker": "BHARTIARTL", "bse": "532454", "industry": "Telecom", "type": "Private"},
+    {"name": "State Bank of India", "ticker": "SBIN", "bse": "500112", "industry": "Public Sector Bank", "type": "Government (PSU)"},
+    {"name": "Life Insurance Corp of India", "ticker": "LICI", "bse": "543526", "industry": "Life Insurance", "type": "Government (PSU)"},
+    {"name": "ITC Ltd", "ticker": "ITC", "bse": "500875", "industry": "FMCG", "type": "Private"},
+    {"name": "Hindustan Unilever", "ticker": "HINDUNILVR", "bse": "500696", "industry": "FMCG", "type": "Private"},
+    {"name": "Larsen & Toubro Ltd", "ticker": "LT", "bse": "500510", "industry": "Infrastructure", "type": "Private"},
+    {"name": "Kotak Mahindra Bank", "ticker": "KOTAKBANK", "bse": "500247", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "Axis Bank Ltd", "ticker": "AXISBANK", "bse": "532215", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "Bajaj Finance Ltd", "ticker": "BAJFINANCE", "bse": "500034", "industry": "NBFC", "type": "Private"},
+    {"name": "HCL Technologies Ltd", "ticker": "HCLTECH", "bse": "532281", "industry": "IT Services", "type": "Private"},
+    {"name": "Maruti Suzuki India", "ticker": "MARUTI", "bse": "532500", "industry": "Automobiles", "type": "Private"},
+    {"name": "Sun Pharmaceutical", "ticker": "SUNPHARMA", "bse": "524715", "industry": "Pharmaceuticals", "type": "Private"},
+    {"name": "Adani Enterprises Ltd", "ticker": "ADANIENT", "bse": "512599", "industry": "Infrastructure", "type": "Private"},
+    {"name": "Titan Company Ltd", "ticker": "TITAN", "bse": "500114", "industry": "Consumer Goods", "type": "Private"},
+    {"name": "Oil & Natural Gas Corp Ltd", "ticker": "ONGC", "bse": "500312", "industry": "Oil Exploration", "type": "Government (PSU)"},
+    {"name": "NTPC Ltd", "ticker": "NTPC", "bse": "532555", "industry": "Power Generation", "type": "Government (PSU)"},
+    {"name": "Power Grid Corp of India", "ticker": "POWERGRID", "bse": "532898", "industry": "Power Transmission", "type": "Government (PSU)"},
+    {"name": "Tata Motors Ltd", "ticker": "TATAMOTORS", "bse": "500570", "industry": "Automobiles", "type": "Private"},
+    {"name": "Coal India Ltd", "ticker": "COALINDIA", "bse": "533278", "industry": "Mining", "type": "Government (PSU)"},
+    {"name": "UltraTech Cement Ltd", "ticker": "ULTRACEMCO", "bse": "532538", "industry": "Cement", "type": "Private"},
+    {"name": "Adani Ports & SEZ", "ticker": "ADANIPORTS", "bse": "532921", "industry": "Ports", "type": "Private"},
+    {"name": "Asian Paints Ltd", "ticker": "ASIANPAINT", "bse": "500820", "industry": "Paints", "type": "Private"},
+    {"name": "Bajaj Finserv Ltd", "ticker": "BAJAJFINSV", "bse": "532978", "industry": "Financial Services", "type": "Private"},
+    {"name": "Nestle India Ltd", "ticker": "NESTLEIND", "bse": "500790", "industry": "FMCG", "type": "Private"},
+    {"name": "Wipro Ltd", "ticker": "WIPRO", "bse": "507685", "industry": "IT Services", "type": "Private"},
+    {"name": "Tech Mahindra Ltd", "ticker": "TECHM", "bse": "532755", "industry": "IT Services", "type": "Private"},
+    {"name": "Grasim Industries Ltd", "ticker": "GRASIM", "bse": "500300", "industry": "Diversified", "type": "Private"},
+    {"name": "JSW Steel Ltd", "ticker": "JSWSTEEL", "bse": "500228", "industry": "Steel", "type": "Private"},
+    {"name": "Hindalco Industries", "ticker": "HINDALCO", "bse": "500440", "industry": "Aluminium", "type": "Private"},
+    {"name": "Tata Steel Ltd", "ticker": "TATASTEEL", "bse": "500470", "industry": "Steel", "type": "Private"},
+    {"name": "Dr Reddy's Laboratories", "ticker": "DRREDDY", "bse": "500124", "industry": "Pharmaceuticals", "type": "Private"},
+    {"name": "Cipla Ltd", "ticker": "CIPLA", "bse": "500087", "industry": "Pharmaceuticals", "type": "Private"},
+    {"name": "Divi's Laboratories", "ticker": "DIVISLAB", "bse": "532488", "industry": "Pharmaceuticals", "type": "Private"},
+    {"name": "Apollo Hospitals", "ticker": "APOLLOHOSP", "bse": "508869", "industry": "Healthcare", "type": "Private"},
+    {"name": "Mahindra & Mahindra", "ticker": "M&M", "bse": "500520", "industry": "Automobiles", "type": "Private"},
+    {"name": "Bajaj Auto Ltd", "ticker": "BAJAJ-AUTO", "bse": "532977", "industry": "Automobiles", "type": "Private"},
+    {"name": "Hero MotoCorp Ltd", "ticker": "HEROMOTOCO", "bse": "500182", "industry": "Automobiles", "type": "Private"},
+    {"name": "Eicher Motors Ltd", "ticker": "EICHERMOT", "bse": "505200", "industry": "Automobiles", "type": "Private"},
+    {"name": "Britannia Industries", "ticker": "BRITANNIA", "bse": "500825", "industry": "FMCG", "type": "Private"},
+    {"name": "Dabur India Ltd", "ticker": "DABUR", "bse": "500096", "industry": "FMCG", "type": "Private"},
+    {"name": "Godrej Consumer Products", "ticker": "GODREJCP", "bse": "532424", "industry": "FMCG", "type": "Private"},
+    {"name": "Marico Ltd", "ticker": "MARICO", "bse": "531642", "industry": "FMCG", "type": "Private"},
+    {"name": "UPL Ltd", "ticker": "UPL", "bse": "512070", "industry": "Agrochemicals", "type": "Private"},
+    {"name": "Shree Cement Ltd", "ticker": "SHREECEM", "bse": "500387", "industry": "Cement", "type": "Private"},
+    {"name": "Ambuja Cements Ltd", "ticker": "AMBUJACEM", "bse": "500425", "industry": "Cement", "type": "Private"},
+    {"name": "ACC Ltd", "ticker": "ACC", "bse": "500410", "industry": "Cement", "type": "Private"},
+    {"name": "SBI Life Insurance", "ticker": "SBILIFE", "bse": "540719", "industry": "Life Insurance", "type": "Private"},
+    {"name": "HDFC Life Insurance", "ticker": "HDFCLIFE", "bse": "540777", "industry": "Life Insurance", "type": "Private"},
+    {"name": "ICICI Prudential Life", "ticker": "ICICIPRULI", "bse": "540133", "industry": "Life Insurance", "type": "Private"},
+    {"name": "ICICI Lombard General", "ticker": "ICICIGI", "bse": "540716", "industry": "General Insurance", "type": "Private"},
+    {"name": "Zomato Ltd", "ticker": "ZOMATO", "bse": "543320", "industry": "Internet", "type": "Private"},
+    {"name": "One97 Communications (Paytm)", "ticker": "PAYTM", "bse": "543396", "industry": "Fintech", "type": "Private"},
+    {"name": "IRCTC", "ticker": "IRCTC", "bse": "542830", "industry": "Travel", "type": "Government (PSU)"},
+    {"name": "Avenue Supermarts (DMart)", "ticker": "DMART", "bse": "540376", "industry": "Retail", "type": "Private"},
+    {"name": "Pidilite Industries", "ticker": "PIDILITIND", "bse": "500331", "industry": "Chemicals", "type": "Private"},
+    {"name": "Berger Paints India", "ticker": "BERGEPAINT", "bse": "509480", "industry": "Paints", "type": "Private"},
+    {"name": "Havells India Ltd", "ticker": "HAVELLS", "bse": "517354", "industry": "Electricals", "type": "Private"},
+    {"name": "Siemens Ltd", "ticker": "SIEMENS", "bse": "500550", "industry": "Capital Goods", "type": "Private"},
+    {"name": "ABB India Ltd", "ticker": "ABB", "bse": "500002", "industry": "Capital Goods", "type": "Private"},
+    {"name": "BHEL", "ticker": "BHEL", "bse": "500103", "industry": "Capital Goods", "type": "Government (PSU)"},
+    {"name": "GAIL (India) Ltd", "ticker": "GAIL", "bse": "532155", "industry": "Gas Transmission", "type": "Government (PSU)"},
+    {"name": "Bharat Petroleum Corp Ltd", "ticker": "BPCL", "bse": "500547", "industry": "Oil & Gas", "type": "Government (PSU)"},
+    {"name": "Indian Oil Corporation Ltd", "ticker": "IOC", "bse": "530965", "industry": "Oil & Gas", "type": "Government (PSU)"},
+    {"name": "Hindustan Petroleum Corp Ltd", "ticker": "HINDPETRO", "bse": "500104", "industry": "Oil & Gas", "type": "Government (PSU)"},
+    {"name": "Vedanta Ltd", "ticker": "VEDL", "bse": "500295", "industry": "Metals & Mining", "type": "Private"},
+    {"name": "Bharat Electronics Ltd", "ticker": "BEL", "bse": "500049", "industry": "Defence", "type": "Government (PSU)"},
+    {"name": "Hindustan Aeronautics", "ticker": "HAL", "bse": "541154", "industry": "Defence", "type": "Government (PSU)"},
+    {"name": "Mazagon Dock Shipbuilders", "ticker": "MAZDOCK", "bse": "543237", "industry": "Defence", "type": "Government (PSU)"},
+    {"name": "Cochin Shipyard Ltd", "ticker": "COCHINSHIP", "bse": "540678", "industry": "Defence", "type": "Government (PSU)"},
+    {"name": "Rail Vikas Nigam Ltd", "ticker": "RVNL", "bse": "542649", "industry": "Railways", "type": "Government (PSU)"},
+    {"name": "Indian Railway Finance Corp", "ticker": "IRFC", "bse": "543257", "industry": "Railways", "type": "Government (PSU)"},
+    {"name": "Punjab National Bank", "ticker": "PNB", "bse": "532461", "industry": "Public Sector Bank", "type": "Government (PSU)"},
+    {"name": "Bank of Baroda", "ticker": "BANKBARODA", "bse": "532134", "industry": "Public Sector Bank", "type": "Government (PSU)"},
+    {"name": "Canara Bank", "ticker": "CANBK", "bse": "532483", "industry": "Public Sector Bank", "type": "Government (PSU)"},
+    {"name": "Union Bank of India", "ticker": "UNIONBANK", "bse": "532477", "industry": "Public Sector Bank", "type": "Government (PSU)"},
+    {"name": "IDBI Bank Ltd", "ticker": "IDBI", "bse": "500116", "industry": "Private Sector Bank", "type": "Government (PSU)"},
+    {"name": "Yes Bank Ltd", "ticker": "YESBANK", "bse": "532648", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "IndusInd Bank Ltd", "ticker": "INDUSINDBK", "bse": "532187", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "Federal Bank Ltd", "ticker": "FEDERALBNK", "bse": "500469", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "IDFC First Bank", "ticker": "IDFCFIRSTB", "bse": "539437", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "Bandhan Bank Ltd", "ticker": "BANDHANBNK", "bse": "541153", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "AU Small Finance Bank", "ticker": "AUBANK", "bse": "540611", "industry": "Private Sector Bank", "type": "Private"},
+    {"name": "Cholamandalam Invest", "ticker": "CHOLAFIN", "bse": "511243", "industry": "NBFC", "type": "Private"},
+    {"name": "Shriram Finance Ltd", "ticker": "SHRIRAMFIN", "bse": "511218", "industry": "NBFC", "type": "Private"},
+    {"name": "Muthoot Finance Ltd", "ticker": "MUTHOOTFIN", "bse": "533398", "industry": "NBFC", "type": "Private"},
+    {"name": "LIC Housing Finance", "ticker": "LICHSGFIN", "bse": "500253", "industry": "Housing Finance", "type": "Government (PSU)"},
+    {"name": "Power Finance Corp", "ticker": "PFC", "bse": "532810", "industry": "Financial Services", "type": "Government (PSU)"},
+    {"name": "REC Ltd", "ticker": "RECLTD", "bse": "532955", "industry": "Financial Services", "type": "Government (PSU)"},
+    {"name": "IREDA", "ticker": "IREDA", "bse": "544026", "industry": "Financial Services", "type": "Government (PSU)"},
+    {"name": "Jio Financial Services", "ticker": "JIOFIN", "bse": "543940", "industry": "Financial Services", "type": "Private"},
+    {"name": "Zydus Lifesciences", "ticker": "ZYDUSLIFE", "bse": "532321", "industry": "Pharmaceuticals", "type": "Private"},
+    {"name": "Lupin Ltd", "ticker": "LUPIN", "bse": "500257", "industry": "Pharmaceuticals", "type": "Private"},
+    {"name": "Tata Power Co Ltd", "ticker": "TATAPOWER", "bse": "500400", "industry": "Power Generation", "type": "Private"},
+    {"name": "DLF Ltd", "ticker": "DLF", "bse": "532868", "industry": "Real Estate", "type": "Private"},
+    {"name": "Godrej Properties", "ticker": "GODREJPROP", "bse": "533150", "industry": "Real Estate", "type": "Private"},
+    {"name": "Trent Ltd", "ticker": "TRENT", "bse": "500251", "industry": "Retail", "type": "Private"},
+    {"name": "Info Edge (India)", "ticker": "NAUKRI", "bse": "532777", "industry": "Internet", "type": "Private"},
+    {"name": "InterGlobe Aviation", "ticker": "INDIGO", "bse": "539448", "industry": "Aviation", "type": "Private"},
+    {"name": "Indraprastha Gas Ltd", "ticker": "IGL", "bse": "532514", "industry": "City Gas", "type": "Government (PSU)"},
+    {"name": "Petronet LNG Ltd", "ticker": "PETRONET", "bse": "532522", "industry": "Gas", "type": "Government (PSU)"},
+    {"name": "Container Corp of India", "ticker": "CONCOR", "bse": "531344", "industry": "Logistics", "type": "Government (PSU)"},
+    {"name": "Torrent Pharmaceuticals", "ticker": "TORNTPHARM", "bse": "500420", "industry": "Pharmaceuticals", "type": "Private"},
+    {"name": "Max Healthcare Institute", "ticker": "MAXHEALTH", "bse": "543220", "industry": "Healthcare", "type": "Private"},
+    {"name": "Polycab India Ltd", "ticker": "POLYCAB", "bse": "542652", "industry": "Electricals", "type": "Private"},
+    {"name": "Bosch Ltd", "ticker": "BOSCHLTD", "bse": "500530", "industry": "Auto Ancillaries", "type": "Private"},
+    {"name": "Samvardhana Motherson", "ticker": "MOTHERSON", "bse": "520008", "industry": "Auto Ancillaries", "type": "Private"},
+    {"name": "TVS Motor Company", "ticker": "TVSMOTOR", "bse": "532343", "industry": "Automobiles", "type": "Private"},
+    {"name": "Cummins India Ltd", "ticker": "CUMMINSIND", "bse": "500480", "industry": "Capital Goods", "type": "Private"},
+    {"name": "Page Industries Ltd", "ticker": "PAGEIND", "bse": "533499", "industry": "Textiles", "type": "Private"},
+    {"name": "SRF Ltd", "ticker": "SRF", "bse": "503806", "industry": "Chemicals", "type": "Private"},
+    {"name": "PI Industries Ltd", "ticker": "PIIND", "bse": "523642", "industry": "Chemicals", "type": "Private"}
 ]
 
 # The exact ordered list of TheAnnexure fields from your CSV
@@ -202,13 +318,20 @@ ANNEXURE_FIELDS = [
     "FY25-26", "Market Cap", "Size band", "Index membership"
 ]
 
-with st.spinner("Fetching data..."):
+# Helper function to fetch both sources for a single company
+def fetch_company_data(comp):
+    gf = fetch_google_finance_live_data(comp["ticker"])
+    annex = fetch_annexure_all_details(comp["bse"])
+    return comp, gf, annex
+
+with st.spinner("Fetching data for 100+ companies (running in parallel for speed)..."):
     table_rows = []
     
-    for comp in COMPANIES:
-        gf = fetch_google_finance_live_data(comp["ticker"])
-        annex = fetch_annexure_all_details(comp["bse"])
-        
+    # Use ThreadPoolExecutor to fetch data in parallel and prevent Streamlit timeouts
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        results = list(executor.map(fetch_company_data, COMPANIES))
+
+    for comp, gf, annex in results:
         # Build the row strictly in the exact order of your CSV
         row = {
             "Company Name": comp["name"],
@@ -237,7 +360,7 @@ st.dataframe(
     df_display,
     use_container_width=True,
     hide_index=True,
-    height=min(750, 45 + 35 * len(df_display))
+    height=min(750, 45 + 35 * len(df_display)) # Caps the height to prevent infinite page scrolling
 )
 
 # Refresh Button
