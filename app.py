@@ -1,65 +1,71 @@
+import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
 
+# 1. Set up the page
+st.set_page_config(page_title="10% Opportunity Scanner", layout="wide")
+st.title("10% Opportunity Scanner")
+st.write("Automated extraction of the company list from TheAnnexure.")
+
+# 2. Define the scraping function
+# We use @st.cache_data so it doesn't scrape the website every time you click a button
+@st.cache_data(show_spinner=False)
 def scrape_annexure_companies():
-    # The direct, server-rendered URL for the company list
     url = "https://theannexure.com/companies.html"
-    
-    # It is crucial to use a User-Agent so the website doesn't block the request
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
-
-    print(f"Connecting to {url}...")
+    
     try:
-        # Enforce a reasonable delay to respect the server
-        time.sleep(2) 
+        time.sleep(1) # Respectful delay
         response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()  # Check for HTTP errors
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"Failed to fetch the page: {e}")
-        return None
+        return None, f"Failed to connect to TheAnnexure: {e}"
 
-    print("Parsing HTML...")
     soup = BeautifulSoup(response.content, 'html.parser')
-    
-    # Find the main table on the page
     table = soup.find('table')
-    if not table:
-        print("Could not find a <table> on the page. The structure might have changed.")
-        return None
-
-    # Extract table rows
-    rows = table.find_all('tr')
     
-    # The first row contains the headers
+    if not table:
+        return None, "Could not find an HTML table on the page. The website structure might have changed."
+
+    rows = table.find_all('tr')
+    if not rows:
+        return None, "Table found, but it has no rows."
+
+    # Extract Headers
     headers = [th.text.strip() for th in rows[0].find_all(['th', 'td'])]
     
-    # Extract data from the remaining rows
+    # Extract Data
     data = []
     for row in rows[1:]:
         cols = [td.text.strip() for td in row.find_all('td')]
-        # We expect 10 columns based on the headers: Company, Ticker, Market cap, Sector, etc.
         if len(cols) == len(headers):
             data.append(cols)
 
-    # Create a Pandas DataFrame
     df = pd.DataFrame(data, columns=headers)
-    
-    print(f"Successfully extracted {len(df)} companies!")
-    return df
+    return df, "Success"
 
-# Run the function and display the result
-if __name__ == "__main__":
-    companies_df = scrape_annexure_companies()
-    
-    if companies_df is not None:
-        # Display the first 10 rows
-        print("\n--- First 10 Companies ---")
-        print(companies_df.head(10))
+# 3. Streamlit UI
+if st.button("Fetch Company List from TheAnnexure"):
+    with st.spinner("Scraping data from TheAnnexure... Please wait."):
+        df, message = scrape_annexure_companies()
         
-        # Optionally, save the data to a CSV file for later use
-        companies_df.to_csv("annexure_companies.csv", index=False)
-        print("\nData saved to 'annexure_companies.csv'")
+        if df is None:
+            st.error(message)
+        else:
+            st.success(f"Successfully extracted {len(df)} companies!")
+            st.dataframe(df, use_container_width=True)
+            
+            # Provide a download button so you can save it
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Company List as CSV",
+                data=csv,
+                file_name='annexure_companies.csv',
+                mime='text/csv',
+            )
+else:
+    st.info("Click the button above to start scraping.")
