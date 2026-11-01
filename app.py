@@ -10,7 +10,6 @@ st.title("10% Opportunity Scanner")
 st.write("Automated extraction of the company list from TheAnnexure.")
 
 # 2. Define the scraping function
-# We use @st.cache_data so it doesn't scrape the website every time you click a button
 @st.cache_data(show_spinner=False)
 def scrape_annexure_companies():
     url = "https://theannexure.com/companies.html"
@@ -35,10 +34,8 @@ def scrape_annexure_companies():
     if not rows:
         return None, "Table found, but it has no rows."
 
-    # Extract Headers
     headers = [th.text.strip() for th in rows[0].find_all(['th', 'td'])]
     
-    # Extract Data
     data = []
     for row in rows[1:]:
         cols = [td.text.strip() for td in row.find_all('td')]
@@ -48,24 +45,29 @@ def scrape_annexure_companies():
     df = pd.DataFrame(data, columns=headers)
     return df, "Success"
 
-# 3. Streamlit UI
-if st.button("Fetch Company List from TheAnnexure"):
-    with st.spinner("Scraping data from TheAnnexure... Please wait."):
-        df, message = scrape_annexure_companies()
-        
-        if df is None:
-            st.error(message)
-        else:
-            st.success(f"Successfully extracted {len(df)} companies!")
-            st.dataframe(df, use_container_width=True)
-            
-            # Provide a download button so you can save it
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Download Company List as CSV",
-                data=csv,
-                file_name='annexure_companies.csv',
-                mime='text/csv',
-            )
+# 3. Automatically fetch data when the app loads
+with st.spinner("Fetching latest company list from TheAnnexure... Please wait."):
+    df, message = scrape_annexure_companies()
+
+# 4. Display the results
+if df is None:
+    st.error(message)
 else:
-    st.info("Click the button above to start scraping.")
+    st.success(f"Successfully loaded {len(df)} companies!")
+    
+    # Show only the first 10 companies as requested
+    st.subheader("Top 10 Companies by Market Cap")
+    st.dataframe(df.head(10), use_container_width=True)
+    
+    # Optional: Put the full list in an expandable section so the page isn't too long
+    with st.expander("Click here to view all 5,159 companies"):
+        st.dataframe(df, use_container_width=True)
+        
+    # Provide the download button
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Download Full Company List as CSV",
+        data=csv,
+        file_name='annexure_companies.csv',
+        mime='text/csv',
+    )
