@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS metric_facts (
     symbol TEXT NOT NULL,
     metric TEXT NOT NULL,
     value REAL,
-    reporting_period TEXT,          -- e.g. "2024-Q3" / "FY2024"
+    reporting_period TEXT,          -- e.g., "2024-Q3" / "FY2024"
     source TEXT NOT NULL,           -- "TheAnnexure" / "NSE" / "manual_import"
     retrieval_date TEXT NOT NULL,
     quality_status TEXT NOT NULL CHECK (
