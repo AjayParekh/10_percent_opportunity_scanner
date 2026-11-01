@@ -205,14 +205,14 @@ with st.spinner("Fetching data..."):
             "Ticker": comp["ticker"]
         }
         
-        # Add Google Finance Data
-        row["Current Price"] = gf["price_str"]
-        row["Absolute Change"] = gf["abs_change_str"]
-        row["Change %"] = gf["pct_change_str"]
+        # Add Google Finance Data (Added source in heading)
+        row["Current Price (Google Finance)"] = gf["price_str"]
+        row["Absolute Change (Google Finance)"] = gf["abs_change_str"]
+        row["Change % (Google Finance)"] = gf["pct_change_str"]
         
-        # Add TheAnnexure Data (dynamically adds any metric found)
+        # Add TheAnnexure Data (Added source in heading)
         for key, value in annex.items():
-            row[key] = value
+            row[f"{key} (TheAnnexure)"] = value
             
         table_rows.append(row)
 
