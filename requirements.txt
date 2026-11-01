@@ -6,3 +6,5 @@ requests
 beautifulsoup4
 plotly
 lxml
+streamlit-autorefresh
+pytz
