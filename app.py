@@ -7,6 +7,23 @@ import time
 import concurrent.futures
 import os
 from datetime import datetime
+import pytz
+from streamlit_autorefresh import st_autorefresh
+
+# --- 0. AUTO REFRESH LOGIC (INDIAN MARKET HOURS) ---
+# Get current time in IST
+ist = pytz.timezone('Asia/Kolkata')
+now_ist = datetime.now(ist)
+
+# Indian Market: Mon-Fri, 9:15 AM to 3:30 PM
+is_weekday = now_ist.weekday() < 5 
+market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+is_market_hours = market_open <= now_ist <= market_close
+
+# If market is open, refresh every 1 hour (3600000 ms)
+if is_weekday and is_market_hours:
+    st_autorefresh(interval=3600000, key="market_hours_refresh")
 
 # --- 1. PAGE SETUP & UI LAYER ---
 st.set_page_config(page_title="Opportunity Scanner", layout="wide", page_icon="🏛️")
@@ -87,6 +104,12 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+# Show market status in the UI
+if is_weekday and is_market_hours:
+    st.success("🟢 Market is OPEN. App will auto-refresh every 1 hour.")
+else:
+    st.info("🔴 Market is CLOSED. Auto-refresh is paused.")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -350,7 +373,7 @@ def load_tracker():
 def save_picks_to_tracker(top_picks_df):
     tracker = load_tracker()
     new_rows = pd.DataFrame({
-        "Date_Logged": [datetime.now().strftime("%Y-%m-%d")] * len(top_picks_df),
+        "Date_Logged": [now_ist.strftime("%Y-%m-%d")] * len(top_picks_df), # Fixed to use IST
         "Ticker": top_picks_df["Ticker"].values,
         "Entry_Price": top_picks_df["_price"].values,
         "Target_Price": top_picks_df["_price"].values * 1.10
