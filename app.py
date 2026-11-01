@@ -9,127 +9,115 @@ import re
 # 1. PAGE CONFIGURATION
 # -------------------------------------------------------------------
 st.set_page_config(page_title="10% Opportunity Scanner", layout="wide")
-st.title("📈 Reliance Industries Ltd - Financial Dashboard")
-st.write("Automated extraction of fundamental data from TheAnnexure.")
+st.title("📈 Reliance Industries Ltd - Full Data Extract")
+st.write("Fetching all available fundamental data strictly from TheAnnexure.")
 
 # -------------------------------------------------------------------
-# 2. SCRAPING FUNCTION
+# 2. COMPREHENSIVE SCRAPING FUNCTION
 # -------------------------------------------------------------------
-@st.cache_data(show_spinner=False, ttl=3600) # Cache for 1 hour
-def fetch_reliance_data():
-    # URL for Reliance (BSE Code: 500325)
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_all_reliance_data():
     url = "https://theannexure.com/company/500325.html"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
-        time.sleep(1) # Respectful delay
+        time.sleep(1)
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         return None, f"Failed to connect to TheAnnexure: {e}"
 
     soup = BeautifulSoup(response.content, 'html.parser')
-    
-    # --- A. Extract Summary Metrics using Regex ---
-    metrics = {
-        "Market Cap": "N/A",
-        "P/E Ratio": "N/A",
-        "P/B Ratio": "N/A",
-        "EPS": "N/A",
-        "Book Value": "N/A",
-        "ROE": "N/A",
-        "Operating Margin": "N/A",
-        "Net Margin": "N/A",
-        "Debt to Equity": "N/A"
-    }
-    
-    # We get the whole text to search for the summary block
     text = soup.get_text(separator=' ', strip=True)
     
-    # Market Cap
+    # --- A. Extract Top Summary Cards ---
+    summary_data = {}
+    
     mc_match = re.search(r"Market cap ₹([\d,\.]+) cr", text)
-    if mc_match:
-        metrics["Market Cap"] = f"₹{mc_match.group(1)} Cr"
+    if mc_match: summary_data["Market Cap"] = f"₹{mc_match.group(1)} Cr"
         
-    # P/E and P/B
-    pe_match = re.search(r"P/E · P/B ([\d\.]+)× · ([\d\.]+)×", text)
-    if pe_match:
-        metrics["P/E Ratio"] = f"{pe_match.group(1)}×"
-        metrics["P/B Ratio"] = f"{pe_match.group(2)}×"
+    pe_pb_match = re.search(r"P/E · P/B ([\d\.]+)× · ([\d\.]+)×", text)
+    if pe_pb_match:
+        summary_data["P/E Ratio"] = f"{pe_pb_match.group(1)}×"
+        summary_data["P/B Ratio"] = f"{pe_pb_match.group(2)}×"
         
-    # EPS and Book Value
     eps_match = re.search(r"EPS ₹([\d\.]+)", text)
-    if eps_match:
-        metrics["EPS"] = f"₹{eps_match.group(1)}"
+    if eps_match: summary_data["EPS"] = f"₹{eps_match.group(1)}"
         
     bv_match = re.search(r"BV ₹([\d\.]+)", text)
-    if bv_match:
-        metrics["Book Value"] = f"₹{bv_match.group(1)}"
+    if bv_match: summary_data["Book Value"] = f"₹{bv_match.group(1)}"
 
-    # --- B. Extract Table Metrics using BeautifulSoup ---
-    # TheAnnexure uses tables for ratios like ROE, Margins, Debt/Equity
-    rows = soup.find_all('tr')
-    for row in rows:
-        th = row.find('th')
-        td = row.find('td')
-        if th and td:
-            label = th.text.strip().lower()
-            value = td.text.strip()
+    # --- B. Extract ALL Data from Tables ---
+    # We will loop through every row in every table.
+    # The first cell is usually the metric name, the second is the value.
+    table_data = {}
+    
+    for table in soup.find_all('table'):
+        for row in table.find_all('tr'):
+            cells = row.find_all(['th', 'td'])
             
-            if "return on equity" in label:
-                metrics["ROE"] = value
-            elif "operating margin" in label:
-                metrics["Operating Margin"] = value
-            elif "net margin" in label:
-                metrics["Net Margin"] = value
-            elif "debt to equity" in label or "debt/equity" in label:
-                metrics["Debt to Equity"] = value
+            # We need at least 2 columns (Label and at least one value)
+            if len(cells) >= 2:
+                # Clean the label (first column)
+                label = cells[0].get_text(separator=' ', strip=True)
+                
+                # Clean the value (second column - we assume this is the latest year)
+                value = cells[1].get_text(separator=' ', strip=True)
+                
+                # Ignore empty rows or header rows
+                if label and value and label.lower() not in ["metric", "ratio", "particulars"]:
+                    # If the metric is already in our summary, we skip to avoid duplicates
+                    if label not in summary_data:
+                        table_data[label] = value
 
-    return metrics, "Success"
+    return summary_data, table_data, "Success"
 
 # -------------------------------------------------------------------
 # 3. MAIN APP LAYOUT
 # -------------------------------------------------------------------
-with st.spinner("Fetching Reliance data from TheAnnexure..."):
-    data, message = fetch_reliance_data()
+with st.spinner("Extracting all data from TheAnnexure..."):
+    summary, table_details, message = fetch_all_reliance_data()
 
-if data is None:
+if summary is None:
     st.error(message)
-    st.info("The website might be temporarily down or the layout changed.")
 else:
-    st.success("Successfully fetched latest data!")
+    st.success("Successfully extracted all data!")
     
-    # --- Row 1: Valuation ---
-    st.subheader("Valuation Summary")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Market Cap", data["Market Cap"])
-    col2.metric("P/E Ratio", data["P/E Ratio"])
-    col3.metric("P/B Ratio", data["P/B Ratio"])
-    col4.metric("Debt to Equity", data["Debt to Equity"])
+    # --- Display Top Summary ---
+    st.subheader("1. Top Summary Cards")
+    cols = st.columns(4)
+    keys = list(summary.keys())
     
-    st.divider()
-    
-    # --- Row 2: Profitability & Returns ---
-    st.subheader("Profitability & Returns")
-    col5, col6, col7, col8 = st.columns(4)
-    col5.metric("Return on Equity (ROE)", data["ROE"])
-    col6.metric("Operating Margin", data["Operating Margin"])
-    col7.metric("Net Margin", data["Net Margin"])
-    col8.metric("EPS", data["EPS"])
-    
-    st.divider()
-    
-    # --- Row 3: Book Value ---
-    st.subheader("Per Share Data")
-    col9, col10 = st.columns(2)
-    col9.metric("Book Value per Share", data["Book Value"])
+    for i, key in enumerate(keys):
+        cols[i % 4].metric(key, summary[key])
 
-    # Optional: Add a button to refresh the cache
+    st.divider()
+    
+    # --- Display All Table Data ---
+    st.subheader("2. Detailed Metrics from Tables")
+    st.write("Below is every metric found in the tables on TheAnnexure. Review this list and let me know which ones you want to use for the 10% Opportunity Score.")
+    
+    if table_details:
+        # Convert the dictionary to a DataFrame for a beautiful display
+        df = pd.DataFrame(list(table_details.items()), columns=["Metric Name", "Current Value"])
+        
+        # Display as a dataframe
+        st.dataframe(df, use_container_width=True, height=600)
+        
+        # Provide a CSV download so you can review it offline
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Full Data Extract as CSV",
+            data=csv,
+            file_name='reliance_full_data.csv',
+            mime='text/csv',
+        )
+    else:
+        st.warning("No table data could be extracted.")
+
+    # Refresh Button
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.rerun()
-
-st.sidebar.markdown("### Data Source")
-st.sidebar.info("Data is sourced directly from [TheAnnexure](https://theannexure.com/). No missing data is replaced with estimates.")
