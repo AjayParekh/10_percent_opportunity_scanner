@@ -6,7 +6,7 @@ import re
 import time
 
 # --- 1. PAGE SETUP & UI LAYER ---
-st.set_page_config(page_title="Reliance & Bank of India - Opportunity Scanner", layout="wide", page_icon="🏛️")
+st.set_page_config(page_title="Opportunity Scanner", layout="wide", page_icon="🏛️")
 
 st.markdown(
     """
@@ -52,7 +52,6 @@ st.markdown(
         margin-bottom: 1.1rem;
     }
     
-    /* Table Styling */
     div[data-testid="stDataFrame"] {
         border: 1px solid var(--border-hairline);
         border-radius: 3px;
@@ -76,12 +75,9 @@ def robust_numeric_parse(val_str):
     except ValueError:
         return 0.0
 
-# --- 2. GOOGLE FINANCE SCRAPER (parameterized for any NSE ticker) ---
+# --- 2. GOOGLE FINANCE SCRAPER ---
 @st.cache_data(ttl=300)
 def fetch_google_finance_live_data(ticker: str):
-    """
-    ticker: NSE symbol (e.g., 'RELIANCE', 'BANKINDIA')
-    """
     url = f"https://www.google.com/finance/beta/quote/{ticker}:NSE?tab=financials"
     metrics = {"price_str": "N/A", "price_val": 0.0, "pct_change_str": "N/A", "abs_change_str": "N/A"}
     
@@ -138,12 +134,9 @@ def fetch_google_finance_live_data(ticker: str):
     return metrics
 
 
-# --- 3. THEANNEXURE COMPREHENSIVE SCRAPER (parameterized by BSE code) ---
+# --- 3. THEANNEXURE SCRAPER ---
 @st.cache_data(ttl=3600)
 def fetch_annexure_all_details(bse_code: str):
-    """
-    bse_code: BSE numeric code (e.g., '500325' for Reliance, '532149' for Bank of India)
-    """
     url = f"https://theannexure.com/company/{bse_code}.html"
     data = {}
     
@@ -153,7 +146,6 @@ def fetch_annexure_all_details(bse_code: str):
         soup = BeautifulSoup(res.content, 'html.parser')
         text = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True))
         
-        # 1. Extract Top Summary Cards via Regex
         mc = re.search(r"Market cap ₹([\d,\.]+) cr", text)
         if mc: data["Market Cap"] = f"₹{mc.group(1)} Cr"
         
@@ -168,7 +160,6 @@ def fetch_annexure_all_details(bse_code: str):
         bv = re.search(r"BV ₹([\d\.]+)", text)
         if bv: data["Book Value"] = f"₹{bv.group(1)}"
 
-        # 2. Extract EVERYTHING from Tables
         for table in soup.find_all('table'):
             for row in table.find_all('tr'):
                 cells = row.find_all(['th', 'td'])
@@ -177,8 +168,7 @@ def fetch_annexure_all_details(bse_code: str):
                     val = re.sub(r'\s+', ' ', cells[1].get_text(strip=True))
                     
                     if label and val and label.lower() not in ["metric", "ratio", "period"]:
-                        if label not in data:
-                            data[label] = val
+                        if label not in data: data[label] = val
                             
     except Exception as e:
         st.error(f"Error scraping TheAnnexure for {bse_code}: {e}")
@@ -189,70 +179,53 @@ def fetch_annexure_all_details(bse_code: str):
 # --- 4. MAIN APP LAYOUT ---
 st.markdown(
     """
-    <div class="omc-eyebrow">Institutional Coverage · Energy & Financials</div>
-    <div class="omc-title">🏛️ Reliance Industries & Bank of India</div>
-    <div class="omc-subtitle">Side-by-side data matrix, tagged by source.</div>
+    <div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>
+    <div class="omc-title">🏛️ Opportunity Scanner</div>
+    <div class="omc-subtitle">Real-time scraped data. Add more companies to the list in the code below.</div>
     """,
     unsafe_allow_html=True
 )
 
-# Company configuration
-COMPANIES = {
-    "Reliance Industries": {"nse": "RELIANCE", "bse": "500325"},
-    "Bank of India":       {"nse": "BANKINDIA", "bse": "532149"},
-}
-
-# Fetch Data for all companies
-with st.spinner("Fetching data from Google Finance and TheAnnexure..."):
-    gf_data_all = {}
-    annexure_data_all = {}
-    for name, codes in COMPANIES.items():
-        gf_data_all[name] = fetch_google_finance_live_data(codes["nse"])
-        annexure_data_all[name] = fetch_annexure_all_details(codes["bse"])
-
-# --- BUILD HORIZONTAL TABLE (metrics as rows, companies as columns) ---
-# Collect all unique metrics while preserving a sensible order
-ordered_metrics = [
-    "Current Price", "Absolute Change", "Change %",
-    "Market Cap", "P/E Ratio", "P/B Ratio", "EPS", "Book Value"
+# --- ADD MORE COMPANIES HERE LATER ---
+COMPANIES = [
+    {"name": "Reliance Industries Ltd", "ticker": "RELIANCE", "bse": "500325"},
+    {"name": "Bank of India",            "ticker": "BANKINDIA", "bse": "532149"}
 ]
 
-# Append any additional metrics discovered from TheAnnexure (beyond the core set)
-extra_metrics = set()
-for name in COMPANIES:
-    for k in annexure_data_all[name].keys():
-        if k not in ordered_metrics:
-            extra_metrics.add(k)
-ordered_metrics.extend(sorted(extra_metrics))
+with st.spinner("Fetching data..."):
+    table_rows = []
+    
+    for comp in COMPANIES:
+        gf = fetch_google_finance_live_data(comp["ticker"])
+        annex = fetch_annexure_all_details(comp["bse"])
+        
+        # Start the row with Company Name and Ticker
+        row = {
+            "Company Name": comp["name"],
+            "Ticker": comp["ticker"]
+        }
+        
+        # Add Google Finance Data
+        row["Current Price"] = gf["price_str"]
+        row["Absolute Change"] = gf["abs_change_str"]
+        row["Change %"] = gf["pct_change_str"]
+        
+        # Add TheAnnexure Data (dynamically adds any metric found)
+        for key, value in annex.items():
+            row[key] = value
+            
+        table_rows.append(row)
 
-# Build rows
-table_rows = []
-for metric in ordered_metrics:
-    row = {"Metric": metric}
-    for company_name in COMPANIES:
-        # Prefer Google Finance for price-related metrics
-        if metric in ("Current Price", "Absolute Change", "Change %"):
-            val = gf_data_all[company_name].get(
-                {"Current Price": "price_str",
-                 "Absolute Change": "abs_change_str",
-                 "Change %": "pct_change_str"}[metric],
-                "N/A"
-            )
-        else:
-            # Otherwise use TheAnnexure data
-            val = annexure_data_all[company_name].get(metric, "—")
-        row[company_name] = val
-    table_rows.append(row)
-
+# Convert to DataFrame
 df_display = pd.DataFrame(table_rows)
 
-# Display horizontal table
+# Display the table (Rows = Companies, Columns = Metrics)
 st.markdown("<hr style='margin:0.5em 0 1em 0;'>", unsafe_allow_html=True)
 st.dataframe(
     df_display,
     use_container_width=True,
-    height=min(750, 40 + 35 * len(df_display)),  # dynamic height
-    hide_index=True
+    hide_index=True,
+    height=min(750, 45 + 35 * len(df_display))
 )
 
 # Refresh Button
