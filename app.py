@@ -5,6 +5,8 @@ import pandas as pd
 import re
 import time
 import concurrent.futures
+import os
+from datetime import datetime
 
 # --- 1. PAGE SETUP & UI LAYER ---
 st.set_page_config(page_title="Opportunity Scanner", layout="wide", page_icon="🏛️")
@@ -21,6 +23,8 @@ st.markdown(
         --text-primary: #E7EAEE;
         --text-secondary: #8891A0;
         --accent-gold: #C6992F;
+        --signal-green: #34D399;
+        --signal-red: #F87171;
     }
 
     .stApp {
@@ -58,7 +62,6 @@ st.markdown(
         border-radius: 3px;
     }
     
-    /* Styling for the Top Pick cards */
     div[data-testid="stMetric"] {
         background-color: var(--bg-panel);
         border: 1px solid var(--border-hairline);
@@ -98,12 +101,11 @@ def robust_numeric_parse(val_str):
     except ValueError:
         return 0.0
 
-# --- 2. GOOGLE FINANCE SCRAPER ---
+# --- 2. SCRAPERS (Google Finance & TheAnnexure) ---
 @st.cache_data(ttl=300)
 def fetch_google_finance_live_data(ticker: str):
     url = f"https://www.google.com/finance/beta/quote/{ticker}:NSE?tab=financials"
     metrics = {"price_str": "N/A", "price_val": 0.0, "pct_change_str": "N/A", "abs_change_str": "N/A"}
-    
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
         if res.status_code != 200: return metrics
@@ -157,12 +159,10 @@ def fetch_google_finance_live_data(ticker: str):
     return metrics
 
 
-# --- 3. THEANNEXURE SCRAPER ---
 @st.cache_data(ttl=3600)
 def fetch_annexure_all_details(bse_code: str):
     url = f"https://theannexure.com/company/{bse_code}.html"
     data = {}
-    
     try:
         res = requests.get(url, headers=HEADERS, timeout=15)
         res.raise_for_status()
@@ -189,27 +189,22 @@ def fetch_annexure_all_details(bse_code: str):
                 if len(cells) >= 2:
                     label = re.sub(r'\s+', ' ', cells[0].get_text(strip=True))
                     val = re.sub(r'\s+', ' ', cells[1].get_text(strip=True))
-                    
                     if label and val and label.lower() not in ["metric", "ratio", "period"]:
                         if label not in data: data[label] = val
-                            
-    except Exception as e:
-        pass # Silently skip if a page fails
-        
+    except Exception: pass
     return data
 
 
-# --- 4. MAIN APP LAYOUT ---
+# --- 3. APP HEADER ---
 st.markdown(
     """
     <div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>
-    <div class="omc-title">🏛️ Opportunity Scanner</div>
+    <div class="omc-title">🏛️ Opportunity Scanner & Tracker</div>
     <div class="omc-subtitle">Real-time scraped data. Over 100 companies tracked.</div>
     """,
     unsafe_allow_html=True
 )
 
-# --- ADD MORE COMPANIES HERE LATER ---
 COMPANIES = [
     {"name": "Reliance Industries Ltd", "ticker": "RELIANCE", "bse": "500325", "industry": "Integrated Energy / O2C", "type": "Private"},
     {"name": "Bank of India", "ticker": "BANKINDIA", "bse": "532149", "industry": "Public Sector Bank", "type": "Government (PSU)"},
@@ -330,7 +325,6 @@ COMPANIES = [
     {"name": "PI Industries Ltd", "ticker": "PIIND", "bse": "523642", "industry": "Chemicals", "type": "Private"}
 ]
 
-# The exact ordered list of TheAnnexure fields from your CSV
 ANNEXURE_FIELDS = [
     "P/E Ratio", "P/B Ratio", "EPS", "Book Value", 
     "Against 52-week high", "Against 52-week low", "Day change", 
@@ -340,21 +334,40 @@ ANNEXURE_FIELDS = [
     "FY25-26", "Market Cap", "Size band", "Index membership"
 ]
 
-# Helper function to fetch both sources for a single company
 def fetch_company_data(comp):
     gf = fetch_google_finance_live_data(comp["ticker"])
     annex = fetch_annexure_all_details(comp["bse"])
     return comp, gf, annex
 
+# --- 4. PERFORMANCE TRACKER STORAGE ---
+TRACKER_FILE = "portfolio_tracker.csv"
+
+def load_tracker():
+    if os.path.exists(TRACKER_FILE):
+        return pd.read_csv(TRACKER_FILE)
+    return pd.DataFrame(columns=["Date_Logged", "Ticker", "Entry_Price", "Target_Price"])
+
+def save_picks_to_tracker(top_picks_df):
+    tracker = load_tracker()
+    new_rows = pd.DataFrame({
+        "Date_Logged": [datetime.now().strftime("%Y-%m-%d")] * len(top_picks_df),
+        "Ticker": top_picks_df["Ticker"].values,
+        "Entry_Price": top_picks_df["_price"].values,
+        "Target_Price": top_picks_df["_price"].values * 1.10
+    })
+    
+    # Avoid duplicates logged on the same day
+    tracker = pd.concat([tracker, new_rows], ignore_index=True)
+    tracker.drop_duplicates(subset=["Date_Logged", "Ticker"], keep="first", inplace=True)
+    tracker.to_csv(TRACKER_FILE, index=False)
+
+# --- 5. MAIN EXECUTION ---
 with st.spinner("Fetching data for 100+ companies (running in parallel for speed)..."):
     table_rows = []
-    
-    # Use ThreadPoolExecutor to fetch data in parallel and prevent Streamlit timeouts
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         results = list(executor.map(fetch_company_data, COMPANIES))
 
     for comp, gf, annex in results:
-        # Build the row strictly in the exact order of your CSV
         row = {
             "Company Name": comp["name"],
             "Ticker": comp["ticker"],
@@ -362,115 +375,178 @@ with st.spinner("Fetching data for 100+ companies (running in parallel for speed
             "Absolute Change (Google Finance)": gf["abs_change_str"],
             "Change % (Google Finance)": gf["pct_change_str"]
         }
-        
-        # Add TheAnnexure Data in exact order
         for field in ANNEXURE_FIELDS:
             row[f"{field} (TheAnnexure)"] = annex.get(field, "N/A")
-            
-        # Add Industry and Company Type at the end as per CSV
         row["Industry"] = comp["industry"]
         row["Company Type"] = comp["type"]
-            
         table_rows.append(row)
 
-# Convert to DataFrame
 df_display = pd.DataFrame(table_rows)
 
-# ==========================================
-# 🎯 10% TARGET CALCULATION ENGINE (TOP SECTION)
-# ==========================================
-st.markdown("### 🎯 Top Picks for ~10% Return (1-2 Months)")
-st.markdown("Calculated by analyzing **Book Value Support**, **52-week high recovery potential**, **valuation (P/E)**, and **ROE**.")
+# Create Tabs
+tab1, tab2 = st.tabs(["🎯 Live Scanner & 10% Engine", "📈 Performance Tracker"])
 
-def parse_percentage(val_str):
-    if not isinstance(val_str, str) or val_str == "N/A": return 0.0
-    try:
-        return float(val_str.replace('%', '').replace(',', '').strip())
-    except: return 0.0
+with tab1:
+    st.markdown("### 🎯 Top Picks for ~10% Return (1-2 Months)")
+    st.markdown("Calculated by analyzing **Book Value Support**, **52-week high recovery potential**, **valuation (P/E)**, and **ROE**.")
 
-def parse_float(val_str):
-    if not isinstance(val_str, str) or val_str == "N/A": return 0.0
-    try:
-        return float(re.sub(r'[^\d.-]', '', val_str))
-    except: return 0.0
+    def parse_percentage(val_str):
+        if not isinstance(val_str, str) or val_str == "N/A": return 0.0
+        try: return float(val_str.replace('%', '').replace(',', '').strip())
+        except: return 0.0
 
-# Create temporary numeric columns for calculation
-df_display['_price'] = df_display['Current Price (Google Finance)'].apply(parse_float)
-df_display['_pe'] = df_display['P/E Ratio (TheAnnexure)'].apply(parse_float)
-df_display['_pb'] = df_display['P/B Ratio (TheAnnexure)'].apply(parse_float)
-df_display['_roe'] = df_display['Return on equity (TheAnnexure)'].apply(parse_float)
-df_display['_down_52w'] = df_display['Against 52-week high (TheAnnexure)'].apply(parse_percentage)
+    def parse_float(val_str):
+        if not isinstance(val_str, str) or val_str == "N/A": return 0.0
+        try: return float(re.sub(r'[^\d.-]', '', val_str))
+        except: return 0.0
 
-# Filter for valid candidates (Price exists, and stock is down from 52w high)
-candidates = df_display[(df_display['_price'] > 0) & (df_display['_down_52w'] < -5)].copy()
+    df_display['_price'] = df_display['Current Price (Google Finance)'].apply(parse_float)
+    df_display['_pe'] = df_display['P/E Ratio (TheAnnexure)'].apply(parse_float)
+    df_display['_pb'] = df_display['P/B Ratio (TheAnnexure)'].apply(parse_float)
+    df_display['_roe'] = df_display['Return on equity (TheAnnexure)'].apply(parse_float)
+    df_display['_down_52w'] = df_display['Against 52-week high (TheAnnexure)'].apply(parse_percentage)
 
-# Scoring Logic for 10% Target
-def calculate_10pct_score(row):
-    score = 0
-    reasons = []
+    candidates = df_display[(df_display['_price'] > 0) & (df_display['_down_52w'] < -5)].copy()
+
+    def calculate_10pct_score(row):
+        score = 0
+        reasons = []
+        if 0 < row['_pb'] < 1.0:
+            score += 4
+            reasons.append("Below Book Value (P/B < 1)")
+        elif 1.0 <= row['_pb'] < 1.5:
+            score += 2
+            reasons.append("Attractive P/B")
+        if 0 < row['_pe'] < 20:
+            score += 2
+            reasons.append("Low P/E")
+        if row['_down_52w'] < -15: 
+            score += 3
+            reasons.append("Deep pullback from high")
+        if row['_roe'] > 15:
+            score += 3
+            reasons.append("Strong ROE")
+        return pd.Series([score, " | ".join(reasons)])
+
+    if not candidates.empty:
+        candidates[['_score', '_reason']] = candidates.apply(calculate_10pct_score, axis=1)
+        top_picks = candidates.sort_values(by='_score', ascending=False).head(3)
+        
+        cols = st.columns(3)
+        for idx, (index, row) in enumerate(top_picks.iterrows()):
+            target_price = row['_price'] * 1.10
+            with cols[idx]:
+                st.metric(
+                    label=f"🏆 {row['Ticker']} ({row['Industry']})",
+                    value=f"Target: ₹{target_price:.2f}",
+                    delta=f"Current: ₹{row['_price']:.2f}"
+                )
+                st.caption(f"**Why?** {row['_reason']}")
+                st.caption(f"**Book Value:** {row['Book Value (TheAnnexure)']} | **P/B:** {row['P/B Ratio (TheAnnexure)']}")
+                st.caption(f"52W High: {row['Against 52-week high (TheAnnexure)']} | ROE: {row['Return on equity (TheAnnexure)']}")
+        
+        # Save Button
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("💾 Save Top 3 Picks to Tracker"):
+            save_picks_to_tracker(top_picks)
+            st.success("Picks saved locally! Download the updated file below and push it to your GitHub repo.")
+    else:
+        st.info("No strong 10% candidates found meeting the criteria right now.")
+
+    df_display_clean = df_display.drop(columns=['_price', '_pe', '_pb', '_roe', '_down_52w'])
+
+    st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
+    st.markdown("### 📋 Full Institutional Data Matrix")
+    st.dataframe(
+        df_display_clean,
+        use_container_width=True,
+        hide_index=True,
+        height=min(750, 45 + 35 * len(df_display_clean)) 
+    )
+
+with tab2:
+    st.markdown("### 📈 Performance Tracker")
+    st.markdown("Track your saved picks to see if they have achieved the 10% goal.")
     
-    # 1. Book Value & Valuation (P/B Ratio)
-    if 0 < row['_pb'] < 1.0:
-        score += 4
-        reasons.append("Below Book Value (P/B < 1)")
-    elif 1.0 <= row['_pb'] < 1.5:
-        score += 2
-        reasons.append("Attractive P/B")
-        
-    if 0 < row['_pe'] < 20:
-        score += 2
-        reasons.append("Low P/E")
-        
-    # 2. Room to Recover (Down > 15% from High)
-    if row['_down_52w'] < -15: 
-        score += 3
-        reasons.append("Deep pullback from high")
+    tracker_df = load_tracker()
     
-    # 3. Quality (ROE)
-    if row['_roe'] > 15:
-        score += 3
-        reasons.append("Strong ROE")
+    if tracker_df.empty:
+        st.info("No picks saved yet. Go to the 'Live Scanner' tab and save your top picks!")
+    else:
+        # Calculate live performance for tracked picks
+        st.markdown("Fetching live prices for your tracked portfolio...")
         
-    return pd.Series([score, " | ".join(reasons)])
-
-if not candidates.empty:
-    candidates[['_score', '_reason']] = candidates.apply(calculate_10pct_score, axis=1)
-    top_picks = candidates.sort_values(by='_score', ascending=False).head(3)
-    
-    cols = st.columns(3)
-    for idx, (index, row) in enumerate(top_picks.iterrows()):
-        target_price = row['_price'] * 1.10
-        
-        with cols[idx]:
-            st.metric(
-                label=f"🏆 {row['Ticker']} ({row['Industry']})",
-                value=f"Target: ₹{target_price:.2f}",
-                delta=f"Current: ₹{row['_price']:.2f}"
+        results = []
+        for index, row in tracker_df.iterrows():
+            ticker = row["Ticker"]
+            entry_price = row["Entry_Price"]
+            target_price = row["Target_Price"]
+            date_logged = row["Date_Logged"]
+            
+            # Fetch current price
+            live_data = fetch_google_finance_live_data(ticker)
+            current_price = live_data["price_val"]
+            
+            if current_price > 0:
+                current_return = ((current_price - entry_price) / entry_price) * 100
+                days_elapsed = (datetime.now() - datetime.strptime(date_logged, "%Y-%m-%d")).days
+                
+                if current_price >= target_price:
+                    status = "✅ Goal Achieved!"
+                else:
+                    status = "⏳ In Progress"
+                    
+                results.append({
+                    "Date Logged": date_logged,
+                    "Ticker": ticker,
+                    "Entry Price": f"₹{entry_price:.2f}",
+                    "Target Price": f"₹{target_price:.2f}",
+                    "Current Price": f"₹{current_price:.2f}",
+                    "Return %": f"{current_return:+.2f}%",
+                    "Days Active": days_elapsed,
+                    "Status": status
+                })
+            else:
+                results.append({
+                    "Date Logged": date_logged,
+                    "Ticker": ticker,
+                    "Entry Price": f"₹{entry_price:.2f}",
+                    "Target Price": f"₹{target_price:.2f}",
+                    "Current Price": "N/A",
+                    "Return %": "N/A",
+                    "Days Active": (datetime.now() - datetime.strptime(date_logged, "%Y-%m-%d")).days,
+                    "Status": "⚠️ Data Missing"
+                })
+                
+        if results:
+            tracker_display_df = pd.DataFrame(results)
+            
+            # Apply styling
+            def color_status(val):
+                if "Achieved" in val: return 'color: #34D399; font-weight: bold;'
+                elif "Progress" in val: return 'color: #C6992F;'
+                return ''
+                
+            styled_tracker = tracker_display_df.style.map(color_status, subset=["Status"])
+            
+            st.dataframe(
+                styled_tracker,
+                use_container_width=True,
+                hide_index=True
             )
-            st.caption(f"**Why?** {row['_reason']}")
-            st.caption(f"**Book Value:** {row['Book Value (TheAnnexure)']} | **P/B:** {row['P/B Ratio (TheAnnexure)']}")
-            st.caption(f"52W High: {row['Against 52-week high (TheAnnexure)']} | ROE: {row['Return on equity (TheAnnexure)']}")
-else:
-    st.info("No strong 10% candidates found meeting the criteria right now.")
+            
+        # Download Button for GitHub persistence
+        st.markdown("<br>", unsafe_allow_html=True)
+        with open(TRACKER_FILE, "rb") as file:
+            st.download_button(
+                label="📥 Download portfolio_tracker.csv (Push to GitHub)",
+                data=file,
+                file_name="portfolio_tracker.csv",
+                mime="text/csv"
+            )
 
-# Clean up temp columns before displaying
-df_display = df_display.drop(columns=['_price', '_pe', '_pb', '_roe', '_down_52w'])
-
-# ==========================================
-# 📊 MAIN DATA MATRIX (BOTTOM SECTION)
-# ==========================================
+# Refresh Button (Global)
 st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
-st.markdown("### 📋 Full Institutional Data Matrix")
-
-st.dataframe(
-    df_display,
-    use_container_width=True,
-    hide_index=True,
-    height=min(750, 45 + 35 * len(df_display)) 
-)
-
-# Refresh Button
-st.markdown("<br>", unsafe_allow_html=True)
-if st.button("🔄 Refresh Data"):
+if st.button("🔄 Refresh Live Data"):
     st.cache_data.clear()
     st.rerun()
