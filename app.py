@@ -1,38 +1,38 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import re
+import pandas as pd
 import time
+import re
 
 # -------------------------------------------------------------------
 # 1. PAGE CONFIGURATION
 # -------------------------------------------------------------------
 st.set_page_config(page_title="10% Opportunity Scanner", layout="wide")
-st.title("📈 Reliance Industries Ltd - Dashboard")
-st.write("Data sourced strictly from TheAnnexure.")
+st.title("📈 Reliance Industries Ltd - Financial Dashboard")
+st.write("Automated extraction of fundamental data from TheAnnexure.")
 
 # -------------------------------------------------------------------
-# 2. THEANNEXURE SCRAPER (Bulletproof Regex Version)
+# 2. SCRAPING FUNCTION
 # -------------------------------------------------------------------
-@st.cache_data(show_spinner=False, ttl=3600)
-def fetch_annexure_data():
+@st.cache_data(show_spinner=False, ttl=3600) # Cache for 1 hour
+def fetch_reliance_data():
+    # URL for Reliance (BSE Code: 500325)
     url = "https://theannexure.com/company/500325.html"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     try:
-        time.sleep(1) # Be respectful to the server
+        time.sleep(1) # Respectful delay
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         return None, f"Failed to connect to TheAnnexure: {e}"
 
-    # Get the raw text of the entire page
     soup = BeautifulSoup(response.content, 'html.parser')
-    text = soup.get_text(separator=' ', strip=True)
     
-    # Initialize all metrics to N/A (strict adherence to rules)
+    # --- A. Extract Summary Metrics using Regex ---
     metrics = {
         "Market Cap": "N/A",
         "P/E Ratio": "N/A",
@@ -42,21 +42,24 @@ def fetch_annexure_data():
         "ROE": "N/A",
         "Operating Margin": "N/A",
         "Net Margin": "N/A",
-        "Debt to Equity": "N/A",
-        "Current Price": "N/A"
+        "Debt to Equity": "N/A"
     }
-
-    # --- REGEX EXTRACTION ---
-    # 1. Top Summary Cards
+    
+    # We get the whole text to search for the summary block
+    text = soup.get_text(separator=' ', strip=True)
+    
+    # Market Cap
     mc_match = re.search(r"Market cap ₹([\d,\.]+) cr", text)
     if mc_match:
         metrics["Market Cap"] = f"₹{mc_match.group(1)} Cr"
         
-    pe_pb_match = re.search(r"P/E · P/B ([\d\.]+)× · ([\d\.]+)×", text)
-    if pe_pb_match:
-        metrics["P/E Ratio"] = f"{pe_pb_match.group(1)}×"
-        metrics["P/B Ratio"] = f"{pe_pb_match.group(2)}×"
+    # P/E and P/B
+    pe_match = re.search(r"P/E · P/B ([\d\.]+)× · ([\d\.]+)×", text)
+    if pe_match:
+        metrics["P/E Ratio"] = f"{pe_match.group(1)}×"
+        metrics["P/B Ratio"] = f"{pe_match.group(2)}×"
         
+    # EPS and Book Value
     eps_match = re.search(r"EPS ₹([\d\.]+)", text)
     if eps_match:
         metrics["EPS"] = f"₹{eps_match.group(1)}"
@@ -64,44 +67,41 @@ def fetch_annexure_data():
     bv_match = re.search(r"BV ₹([\d\.]+)", text)
     if bv_match:
         metrics["Book Value"] = f"₹{bv_match.group(1)}"
-        
-    # Assuming TheAnnexure shows current price somewhere similar to this:
-    price_match = re.search(r"Current Price ₹([\d,\.]+)", text)
-    if price_match:
-        metrics["Current Price"] = f"₹{price_match.group(1)}"
 
-    # 2. Ratio Tables (Looking for the exact text patterns)
-    roe_match = re.search(r"Return on equity \| ([\d\.]+%)", text)
-    if roe_match:
-        metrics["ROE"] = roe_match.group(1)
-        
-    op_margin_match = re.search(r"Operating margin \| ([\d\.]+%)", text)
-    if op_margin_match:
-        metrics["Operating Margin"] = op_margin_match.group(1)
-        
-    net_margin_match = re.search(r"Net margin \| ([\d\.]+%)", text)
-    if net_margin_match:
-        metrics["Net Margin"] = net_margin_match.group(1)
-        
-    # Debt to Equity often appears as "Debt to Equity (x) 0.42" or similar in the table text
-    debt_match = re.search(r"Debt to Equity \(x\) ([\d\.]+)", text)
-    if debt_match:
-        metrics["Debt to Equity"] = debt_match.group(1)
+    # --- B. Extract Table Metrics using BeautifulSoup ---
+    # TheAnnexure uses tables for ratios like ROE, Margins, Debt/Equity
+    rows = soup.find_all('tr')
+    for row in rows:
+        th = row.find('th')
+        td = row.find('td')
+        if th and td:
+            label = th.text.strip().lower()
+            value = td.text.strip()
+            
+            if "return on equity" in label:
+                metrics["ROE"] = value
+            elif "operating margin" in label:
+                metrics["Operating Margin"] = value
+            elif "net margin" in label:
+                metrics["Net Margin"] = value
+            elif "debt to equity" in label or "debt/equity" in label:
+                metrics["Debt to Equity"] = value
 
     return metrics, "Success"
 
 # -------------------------------------------------------------------
 # 3. MAIN APP LAYOUT
 # -------------------------------------------------------------------
-with st.spinner("Fetching data from TheAnnexure..."):
-    data, message = fetch_annexure_data()
+with st.spinner("Fetching Reliance data from TheAnnexure..."):
+    data, message = fetch_reliance_data()
 
 if data is None:
     st.error(message)
+    st.info("The website might be temporarily down or the layout changed.")
 else:
-    st.success("Successfully fetched data from TheAnnexure.")
+    st.success("Successfully fetched latest data!")
     
-    # --- Display Valuation ---
+    # --- Row 1: Valuation ---
     st.subheader("Valuation Summary")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Market Cap", data["Market Cap"])
@@ -111,7 +111,7 @@ else:
     
     st.divider()
     
-    # --- Display Profitability ---
+    # --- Row 2: Profitability & Returns ---
     st.subheader("Profitability & Returns")
     col5, col6, col7, col8 = st.columns(4)
     col5.metric("Return on Equity (ROE)", data["ROE"])
@@ -121,12 +121,15 @@ else:
     
     st.divider()
     
-    # --- Display Per Share ---
+    # --- Row 3: Book Value ---
     st.subheader("Per Share Data")
     col9, col10 = st.columns(2)
     col9.metric("Book Value per Share", data["Book Value"])
-    
-    # Refresh Button
+
+    # Optional: Add a button to refresh the cache
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.rerun()
+
+st.sidebar.markdown("### Data Source")
+st.sidebar.info("Data is sourced directly from [TheAnnexure](https://theannexure.com/). No missing data is replaced with estimates.")
