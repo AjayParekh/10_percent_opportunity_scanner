@@ -187,9 +187,10 @@ st.markdown(
 )
 
 # --- ADD MORE COMPANIES HERE LATER ---
+# Added "industry" and "type" to the dictionary
 COMPANIES = [
-    {"name": "Reliance Industries Ltd", "ticker": "RELIANCE", "bse": "500325"},
-    {"name": "Bank of India",            "ticker": "BANKINDIA", "bse": "532149"}
+    {"name": "Reliance Industries Ltd", "ticker": "RELIANCE", "bse": "500325", "industry": "Integrated Energy / O2C", "type": "Private"},
+    {"name": "Bank of India",            "ticker": "BANKINDIA", "bse": "532149", "industry": "Public Sector Bank", "type": "Government (PSU)"}
 ]
 
 with st.spinner("Fetching data..."):
@@ -199,10 +200,12 @@ with st.spinner("Fetching data..."):
         gf = fetch_google_finance_live_data(comp["ticker"])
         annex = fetch_annexure_all_details(comp["bse"])
         
-        # Start the row with Company Name and Ticker
+        # Start the row with Company Name, Ticker, Industry, and Company Type
         row = {
             "Company Name": comp["name"],
-            "Ticker": comp["ticker"]
+            "Ticker": comp["ticker"],
+            "Industry": comp["industry"],
+            "Company Type": comp["type"]
         }
         
         # Add Google Finance Data (Added source in heading)
