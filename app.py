@@ -51,25 +51,6 @@ st.markdown(
         color: var(--text-secondary);
         margin-bottom: 1.1rem;
     }
-
-    div[data-testid="stMetric"] {
-        background-color: var(--bg-panel);
-        border: 1px solid var(--border-hairline);
-        border-radius: 3px;
-        padding: 0.9rem 1rem 0.7rem 1rem;
-    }
-    div[data-testid="stMetric"] label {
-        font-family: 'IBM Plex Mono', monospace !important;
-        font-size: 0.7rem !important;
-        color: var(--text-secondary) !important;
-        text-transform: uppercase;
-    }
-    div[data-testid="stMetricValue"] {
-        font-family: 'IBM Plex Mono', monospace !important;
-        color: var(--text-primary) !important;
-        font-weight: 600 !important;
-        font-size: 1.35rem !important;
-    }
     
     /* Table Styling */
     div[data-testid="stDataFrame"] {
@@ -181,18 +162,15 @@ def fetch_annexure_all_details():
         bv = re.search(r"BV ₹([\d\.]+)", text)
         if bv: data["Book Value"] = f"₹{bv.group(1)}"
 
-        # 2. Extract EVERYTHING from Tables (Aggressive parsing)
+        # 2. Extract EVERYTHING from Tables
         for table in soup.find_all('table'):
             for row in table.find_all('tr'):
                 cells = row.find_all(['th', 'td'])
                 if len(cells) >= 2:
-                    # Clean label and value
                     label = re.sub(r'\s+', ' ', cells[0].get_text(strip=True))
                     val = re.sub(r'\s+', ' ', cells[1].get_text(strip=True))
                     
-                    # Filter out empty rows or headers
                     if label and val and label.lower() not in ["metric", "ratio", "period"]:
-                        # If it's not already in our dictionary, add it
                         if label not in data:
                             data[label] = val
                             
@@ -207,30 +185,17 @@ st.markdown(
     """
     <div class="omc-eyebrow">Institutional Coverage · Energy</div>
     <div class="omc-title">🏛️ Reliance Industries Ltd</div>
-    <div class="omc-subtitle">Production-ready quantitative screening & valuation matrices for Reliance.</div>
+    <div class="omc-subtitle">Comprehensive data matrix for Reliance, tagged by source.</div>
     """,
     unsafe_allow_html=True
 )
 
 # Fetch Data
-with st.spinner("Fetching live data and deep fundamentals..."):
+with st.spinner("Fetching data from Google Finance and TheAnnexure..."):
     gf_data = fetch_google_finance_live_data()
     annexure_data = fetch_annexure_all_details()
 
-# --- Display Top Live Data (Google Finance) ---
-st.markdown('<div class="omc-eyebrow" style="margin-top:1rem;">Live Market Price · Google Finance</div>', unsafe_allow_html=True)
-
-col1, col2, col3 = st.columns(3)
-col1.metric("Current Market Price", gf_data["price_str"])
-col2.metric("Absolute Change", gf_data["abs_change_str"])
-col3.metric("Change %", gf_data["pct_change_str"])
-
-st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
-
-# --- Display Detailed Table (Combining Sources) ---
-st.markdown('<div class="omc-eyebrow">Comprehensive Data Matrix · Source Tagged</div>', unsafe_allow_html=True)
-
-# Build a unified list of dictionaries for the table
+# Build the Unified Table
 table_rows = []
 
 # Add Google Finance Data
@@ -245,11 +210,12 @@ for key, value in annexure_data.items():
 # Convert to DataFrame
 df_display = pd.DataFrame(table_rows)
 
-# Display the table
+# Display ONLY the table
+st.markdown("<hr style='margin:0.5em 0 1em 0;'>", unsafe_allow_html=True)
 st.dataframe(
     df_display,
     use_container_width=True,
-    height=600, # Fixed height so it doesn't take up the whole page
+    height=750, # Taller table to fit all data
     hide_index=True
 )
 
