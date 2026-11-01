@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
+import time
 
 # --- 1. PAGE SETUP & UI LAYER ---
 st.set_page_config(page_title="Reliance - 10% Opportunity Scanner", layout="wide", page_icon="🏛️")
@@ -146,6 +147,7 @@ def fetch_annexure_all_details():
         soup = BeautifulSoup(res.content, 'html.parser')
         text = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True))
         
+        # 1. Extract Top Summary Cards via Regex
         mc = re.search(r"Market cap ₹([\d,\.]+) cr", text)
         if mc: data["Market Cap"] = f"₹{mc.group(1)} Cr"
         
@@ -160,6 +162,7 @@ def fetch_annexure_all_details():
         bv = re.search(r"BV ₹([\d\.]+)", text)
         if bv: data["Book Value"] = f"₹{bv.group(1)}"
 
+        # 2. Extract EVERYTHING from Tables
         for table in soup.find_all('table'):
             for row in table.find_all('tr'):
                 cells = row.find_all(['th', 'td'])
@@ -182,7 +185,7 @@ st.markdown(
     """
     <div class="omc-eyebrow">Institutional Coverage · Energy</div>
     <div class="omc-title">🏛️ Reliance Industries Ltd</div>
-    <div class="omc-subtitle">Horizontal data matrix for Reliance, tagged by source.</div>
+    <div class="omc-subtitle">Comprehensive data matrix for Reliance, tagged by source.</div>
     """,
     unsafe_allow_html=True
 )
@@ -192,33 +195,29 @@ with st.spinner("Fetching data from Google Finance and TheAnnexure..."):
     gf_data = fetch_google_finance_live_data()
     annexure_data = fetch_annexure_all_details()
 
-# Build a single dictionary of all metrics (No hardcoded placeholders)
-horizontal_data = {}
+# Build the Unified Table
+table_rows = []
 
 # Add Google Finance Data
-horizontal_data["Current Price"] = gf_data["price_str"]
-horizontal_data["Absolute Change"] = gf_data["abs_change_str"]
-horizontal_data["Change %"] = gf_data["pct_change_str"]
+table_rows.append({"Metric": "Current Price", "Value": gf_data["price_str"], "Source": "Google Finance"})
+table_rows.append({"Metric": "Absolute Change", "Value": gf_data["abs_change_str"], "Source": "Google Finance"})
+table_rows.append({"Metric": "Change %", "Value": gf_data["pct_change_str"], "Source": "Google Finance"})
 
 # Add TheAnnexure Data
 for key, value in annexure_data.items():
-    horizontal_data[key] = value
+    table_rows.append({"Metric": key, "Value": value, "Source": "TheAnnexure"})
 
-# Convert the single dictionary into a 1-row DataFrame
-df_horizontal = pd.DataFrame([horizontal_data])
+# Convert to DataFrame
+df_display = pd.DataFrame(table_rows)
 
-# Display ONLY the horizontal table
+# Display ONLY the table
 st.markdown("<hr style='margin:0.5em 0 1em 0;'>", unsafe_allow_html=True)
 st.dataframe(
-    df_horizontal,
+    df_display,
     use_container_width=True,
+    height=750, # Taller table to fit all data
     hide_index=True
 )
-
-# Optional: Keep the raw expander just so you can check the sources
-with st.expander("🔍 View Data Sources"):
-    st.write("**Google Finance:**", gf_data)
-    st.write("**TheAnnexure:**", annexure_data)
 
 # Refresh Button
 st.markdown("<br>", unsafe_allow_html=True)
