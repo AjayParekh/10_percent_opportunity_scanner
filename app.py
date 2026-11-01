@@ -55,20 +55,6 @@ st.markdown(
         max-width: 720px;
         margin-bottom: 1.1rem;
     }
-    .omc-statusbar {
-        display: flex;
-        gap: 1.75rem;
-        flex-wrap: wrap;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.78rem;
-        color: var(--text-secondary);
-        border-top: 1px solid var(--border-hairline);
-        border-bottom: 1px solid var(--border-hairline);
-        padding: 0.6rem 0.1rem;
-        margin-bottom: 1.6rem;
-    }
-    .omc-statusbar b { color: var(--text-primary); font-weight: 600; }
-    .omc-statusbar .dot { color: var(--accent-gold); }
 
     div[data-testid="stMetric"] {
         background-color: var(--bg-panel);
@@ -98,7 +84,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# --- 2. EXACT GOOGLE FINANCE SCRAPER (From your reference code) ---
+# --- 2. EXACT GOOGLE FINANCE SCRAPER (With the Absolute Change Fallback) ---
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9"
@@ -126,20 +112,19 @@ def fetch_google_finance_live_data():
             return metrics
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # Price Extraction
         price_el = soup.find(attrs={"data-last-price": True}) or soup.find(class_="YMlKec fxKbKc")
         if not price_el:
             for div in soup.find_all("div"):
                 if div.text and div.text.strip().startswith("₹") and len(div.text.strip()) < 15:
                     price_el = div
                     break
-                    
+
         if price_el:
             metrics["price_str"] = price_el.text.strip()
             metrics["price_val"] = robust_numeric_parse(metrics["price_str"])
 
-        # Change Extraction
         full_text = re.sub(r'\s+', ' ', soup.get_text(separator=" "))
+
         change_pattern_pct_first = re.search(r'([+-]?\d+\.\d+)\s*%\s*\(\s*([+-]?[\d,]+\.\d+)\s*\)\s*1D', full_text)
         change_pattern_abs_first = re.search(r'\(\s*([+-]?[\d,]+\.\d+)\s*\)\s*([+-]?\d+\.\d+)\s*%\s*1D', full_text)
 
@@ -153,20 +138,37 @@ def fetch_google_finance_live_data():
             metrics["pct_change_str"] = f"{pct_part}%"
             metrics["abs_change_str"] = abs_part
         else:
-            # Fallback extraction if layout changes
-            parent = price_el.find_parent() if price_el else None
-            if parent:
-                change_text = parent.find(string=re.compile(r'%'))
-                if change_text:
-                    extracted = re.findall(r'([+-]?\d+(?:\.\d+)?%?)', change_text)
-                    if extracted: metrics["pct_change_str"] = extracted[0]
+            # FALLBACK LOGIC FROM YOUR REFERENCE CODE
+            change_text = ""
+            if price_el:
+                parent = price_el.find_parent()
+                if parent:
+                    sibling_divs = parent.find_all(string=re.compile(r'%'))
+                    if sibling_divs:
+                        change_text = sibling_divs[0].strip()
+            if change_text:
+                clean_text = change_text.replace("Today", "").replace("After hours", "").strip()
+                extracted_metrics = re.findall(r'([+-]?\d+(?:\.\d+)?%?)', clean_text)
+                if extracted_metrics:
+                    metrics["pct_change_str"] = extracted_metrics[0]
+            
+            # Mathematical calculation for Absolute Change
+            try:
+                if metrics["price_val"] > 0 and metrics["pct_change_str"] != "N/A":
+                    raw_pct = float(re.sub(r'[^\d.-]', '', metrics["pct_change_str"]))
+                    prev_close = metrics["price_val"] / (1 + (raw_pct / 100.0))
+                    calculated_abs_change = metrics["price_val"] - prev_close
+                    metrics["abs_change_str"] = f"{'+' if calculated_abs_change > 0 else ''}{calculated_abs_change:.2f}"
+            except Exception:
+                pass
+                
     except Exception as e:
         pass
         
     return metrics
 
 
-# --- 3. THEANNEXURE SCRAPER (Fundamentals) ---
+# --- 3. THEANNEXURE SCRAPER (Fixed Debt to Equity) ---
 @st.cache_data(ttl=3600)
 def fetch_annexure_fundamentals():
     url = "https://theannexure.com/company/500325.html"
@@ -197,11 +199,11 @@ def fetch_annexure_fundamentals():
         bv = re.search(r"BV ₹([\d\.]+)", text)
         if bv: metrics["Book Value"] = f"₹{bv.group(1)}"
 
-        # Tables (ROE, Margins, Debt/Equity)
+        # Tables (ROE, Margins, Debt/Equity) - Checking BOTH th and td
         for row in soup.find_all('tr'):
             cells = row.find_all(['th', 'td'])
             if len(cells) >= 2:
-                label = cells[0].get_text(strip=True).lower()
+                label = re.sub(r'\s+', ' ', cells[0].get_text(strip=True).lower())
                 val = cells[1].get_text(strip=True)
                 
                 if "return on equity" in label: metrics["ROE"] = val
@@ -231,7 +233,7 @@ with st.spinner("Fetching live data..."):
     live_data = fetch_google_finance_live_data()
     fund_data = fetch_annexure_fundamentals()
 
-# Display Google Finance Live Data (Top Section)
+# Display Google Finance Live Data
 st.markdown('<div class="omc-eyebrow" style="margin-top:1rem;">Live Market Price · Google Finance</div>', unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns(3)
@@ -241,7 +243,7 @@ col3.metric("Change %", live_data["pct_change_str"])
 
 st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
 
-# Display TheAnnexure Fundamentals (Bottom Section)
+# Display TheAnnexure Fundamentals
 st.markdown('<div class="omc-eyebrow">Fundamental Metrics · TheAnnexure</div>', unsafe_allow_html=True)
 
 c1, c2, c3, c4 = st.columns(4)
@@ -256,7 +258,7 @@ c6.metric("Net Margin", fund_data["Net Margin"])
 c7.metric("EPS", fund_data["EPS"])
 c8.metric("Book Value", fund_data["Book Value"])
 
-# Optional refresh button
+# Refresh button
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear()
