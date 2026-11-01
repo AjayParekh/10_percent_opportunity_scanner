@@ -181,16 +181,25 @@ st.markdown(
     """
     <div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>
     <div class="omc-title">🏛️ Opportunity Scanner</div>
-    <div class="omc-subtitle">Real-time scraped data. Add more companies to the list in the code below.</div>
+    <div class="omc-subtitle">Real-time scraped data, strictly limited to the selected columns.</div>
     """,
     unsafe_allow_html=True
 )
 
 # --- ADD MORE COMPANIES HERE LATER ---
-# Added "industry" and "type" to the dictionary
 COMPANIES = [
     {"name": "Reliance Industries Ltd", "ticker": "RELIANCE", "bse": "500325", "industry": "Integrated Energy / O2C", "type": "Private"},
     {"name": "Bank of India",            "ticker": "BANKINDIA", "bse": "532149", "industry": "Public Sector Bank", "type": "Government (PSU)"}
+]
+
+# The exact ordered list of TheAnnexure fields from your CSV
+ANNEXURE_FIELDS = [
+    "P/E Ratio", "P/B Ratio", "EPS", "Book Value", 
+    "Against 52-week high", "Against 52-week low", "Day change", 
+    "Earnings per share", "Price / earnings", "Price / book", 
+    "Book value— derived, price ÷ P/B", "Return on equity", 
+    "Operating margin", "Net margin", "Jun-26 · Q", "Mar-26 · Q", 
+    "FY25-26", "Market Cap", "Size band", "Index membership"
 ]
 
 with st.spinner("Fetching data..."):
@@ -200,22 +209,22 @@ with st.spinner("Fetching data..."):
         gf = fetch_google_finance_live_data(comp["ticker"])
         annex = fetch_annexure_all_details(comp["bse"])
         
-        # Start the row with Company Name, Ticker, Industry, and Company Type
+        # Build the row strictly in the exact order of your CSV
         row = {
             "Company Name": comp["name"],
             "Ticker": comp["ticker"],
-            "Industry": comp["industry"],
-            "Company Type": comp["type"]
+            "Current Price (Google Finance)": gf["price_str"],
+            "Absolute Change (Google Finance)": gf["abs_change_str"],
+            "Change % (Google Finance)": gf["pct_change_str"]
         }
         
-        # Add Google Finance Data (Added source in heading)
-        row["Current Price (Google Finance)"] = gf["price_str"]
-        row["Absolute Change (Google Finance)"] = gf["abs_change_str"]
-        row["Change % (Google Finance)"] = gf["pct_change_str"]
-        
-        # Add TheAnnexure Data (Added source in heading)
-        for key, value in annex.items():
-            row[f"{key} (TheAnnexure)"] = value
+        # Add TheAnnexure Data in exact order
+        for field in ANNEXURE_FIELDS:
+            row[f"{field} (TheAnnexure)"] = annex.get(field, "N/A")
+            
+        # Add Industry and Company Type at the end as per CSV
+        row["Industry"] = comp["industry"]
+        row["Company Type"] = comp["type"]
             
         table_rows.append(row)
 
