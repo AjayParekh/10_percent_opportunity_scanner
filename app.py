@@ -3,8 +3,9 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
+import time
 
-# --- 1. PAGE SETUP & UI LAYER (Matches your reference) ---
+# --- 1. PAGE SETUP & UI LAYER ---
 st.set_page_config(page_title="Reliance - 10% Opportunity Scanner", layout="wide", page_icon="🏛️")
 
 st.markdown(
@@ -19,8 +20,6 @@ st.markdown(
         --text-primary: #E7EAEE;
         --text-secondary: #8891A0;
         --accent-gold: #C6992F;
-        --signal-green: #34D399;
-        --signal-red: #F87171;
     }
 
     .stApp {
@@ -52,15 +51,12 @@ st.markdown(
         color: var(--text-secondary);
         margin-bottom: 1.1rem;
     }
-
+    
+    /* Table Styling */
     div[data-testid="stDataFrame"] {
-        filter: none !important;
-        opacity: 1 !important;
-        transition: none !important;
-        border: 1px solid var(--border-hairline) !important;
-        border-radius: 3px !important;
+        border: 1px solid var(--border-hairline);
+        border-radius: 3px;
     }
-    #root .stStatusWidget { display: none !important; }
     hr { border-color: var(--border-hairline) !important; }
     </style>
     """,
@@ -139,7 +135,7 @@ def fetch_google_finance_live_data():
     return metrics
 
 
-# --- 3. THEANNEXURE SCRAPER ---
+# --- 3. THEANNEXURE COMPREHENSIVE SCRAPER ---
 @st.cache_data(ttl=3600)
 def fetch_annexure_all_details():
     url = "https://theannexure.com/company/500325.html"
@@ -151,13 +147,13 @@ def fetch_annexure_all_details():
         soup = BeautifulSoup(res.content, 'html.parser')
         text = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True))
         
-        # Regex for Top Summary
+        # 1. Extract Top Summary Cards via Regex
         mc = re.search(r"Market cap ₹([\d,\.]+) cr", text)
         if mc: data["Market Cap"] = f"₹{mc.group(1)} Cr"
         
         pe_pb = re.search(r"P/E · P/B ([\d\.]+)× · ([\d\.]+)×", text)
         if pe_pb:
-            data["Stock P/E"] = f"{pe_pb.group(1)}×"
+            data["P/E Ratio"] = f"{pe_pb.group(1)}×"
             data["P/B Ratio"] = f"{pe_pb.group(2)}×"
             
         eps = re.search(r"EPS ₹([\d\.]+)", text)
@@ -166,7 +162,7 @@ def fetch_annexure_all_details():
         bv = re.search(r"BV ₹([\d\.]+)", text)
         if bv: data["Book Value"] = f"₹{bv.group(1)}"
 
-        # Regex for Tables
+        # 2. Extract EVERYTHING from Tables
         for table in soup.find_all('table'):
             for row in table.find_all('tr'):
                 cells = row.find_all(['th', 'td'])
@@ -175,16 +171,8 @@ def fetch_annexure_all_details():
                     val = re.sub(r'\s+', ' ', cells[1].get_text(strip=True))
                     
                     if label and val and label.lower() not in ["metric", "ratio", "period"]:
-                        # Standardize names for our matrix
-                        if "Return on equity" in label: data["ROE"] = val
-                        elif "Debt to Equity" in label: data["Debt / Equity"] = val
-                        elif "Operating margin" in label: data["Operating Margin"] = val
-                        elif "Net margin" in label: data["Net Margin"] = val
-                        elif "Against 52-week high" in label: data["52W High %"] = val
-                        elif "Against 52-week low" in label: data["52W Low %"] = val
-                        else:
-                            if label not in data:
-                                data[label] = val
+                        if label not in data:
+                            data[label] = val
                             
     except Exception as e:
         st.error(f"Error scraping TheAnnexure: {e}")
@@ -192,94 +180,47 @@ def fetch_annexure_all_details():
     return data
 
 
-# --- 4. BUILD THE HORIZONTAL MATRIX ROW ---
-# Fetch Data
-with st.spinner("Fetching live data from Google Finance and TheAnnexure..."):
-    gf = fetch_google_finance_live_data()
-    ax = fetch_annexure_all_details()
-
-# Combine into the exact column structure from your reference
-row_data = {
-    "Sr. No.": 1,
-    "Composite Rec": "⏳ WAIT", # Placeholder for your 10% logic later
-    "Ticker": "RELIANCE",
-    "Company Name": "Reliance Industries Ltd",
-    "Entry Status": "⏳ WAIT (Need Math)", 
-    "Ideal Entry Range": "N/A",
-    "Trend Position": "Mid-Range (Neutral)",
-    "Engine Signal": "⚪ WATCH",
-    "Quality Filter": "N/A",
-    "Upside Target %": "N/A",
-    "Low PE Alert": "⚪ WAIT",
-    "BSE Group": "A",
-    "Current Price": gf["price_str"],
-    "Chg / Chg %": f"{gf['abs_change_str']} ({gf['pct_change_str']})",
-    "52W High": ax.get("52W High", "N/A"), # Will fallback to N/A if not found
-    "52W Low": ax.get("52W Low", "N/A"),
-    "Stock P/E": ax.get("Stock P/E", "N/A"),
-    "P/B Ratio": ax.get("P/B Ratio", "N/A"),
-    "Book Value": ax.get("Book Value", "N/A"),
-    "Debt / Equity": ax.get("Debt / Equity", "N/A"),
-    "ROE": ax.get("ROE", "N/A"),
-    "Market Cap": ax.get("Market Cap", "N/A"),
-}
-
-# Convert to DataFrame
-df_matrix = pd.DataFrame([row_data])
-
-# Styling Functions (Same as your reference)
-def _style_signal(val):
-    text = str(val)
-    if "STRONG BUY" in text or "🚀" in text or "🟢" in text:
-        return "background-color: rgba(52,211,153,0.12); color:#34D399; font-weight:600;"
-    if "🔴" in text:
-        return "background-color: rgba(248,113,113,0.10); color:#F87171; font-weight:600;"
-    if "⚪" in text or "WATCH" in text:
-        return "color:#8891A0;"
-    return ""
-
-def _style_signed_pct(val):
-    try:
-        num = float(str(val).replace("%", "").replace("⚠️", "").replace("▲", "").strip())
-        if num > 0: return "color:#34D399;"
-        if num < 0: return "color:#F87171;"
-    except Exception: pass
-    return ""
-
-signal_cols = ["Composite Rec", "Engine Signal", "Quality Filter", "Low PE Alert", "Entry Status"]
-signed_pct_cols = ["Chg / Chg %", "Upside Target %"]
-
-styled_df = df_matrix.style
-style_fn = getattr(styled_df, "map", None) or styled_df.applymap
-if signal_cols:
-    styled_df = style_fn(_style_signal, subset=signal_cols)
-    style_fn = getattr(styled_df, "map", None) or styled_df.applymap
-if signed_pct_cols:
-    styled_df = style_fn(_style_signed_pct, subset=signed_pct_cols)
-
-# --- 5. MAIN APP LAYOUT ---
+# --- 4. MAIN APP LAYOUT ---
 st.markdown(
     """
-    <div class="omc-eyebrow">Cross-Strategy Overlay</div>
-    <div class="omc-title" style="font-size:1.4rem;">🏛️ Integrated Institutional Strategy Matrix</div>
-    <div class="omc-subtitle">Cross-strategy asset valuation overlay – the <b>Composite Rec</b> merges Engine, Filter, Target & Flag. <b>Entry Status</b> and <b>Ideal Entry Range</b> prevent bad timing.</div>
+    <div class="omc-eyebrow">Institutional Coverage · Energy</div>
+    <div class="omc-title">🏛️ Reliance Industries Ltd</div>
+    <div class="omc-subtitle">Comprehensive data matrix for Reliance, tagged by source.</div>
     """,
     unsafe_allow_html=True
 )
 
-# Display the Horizontal Table
+# Fetch Data
+with st.spinner("Fetching data from Google Finance and TheAnnexure..."):
+    gf_data = fetch_google_finance_live_data()
+    annexure_data = fetch_annexure_all_details()
+
+# Build the Unified Table
+table_rows = []
+
+# Add Google Finance Data
+table_rows.append({"Metric": "Current Price", "Value": gf_data["price_str"], "Source": "Google Finance"})
+table_rows.append({"Metric": "Absolute Change", "Value": gf_data["abs_change_str"], "Source": "Google Finance"})
+table_rows.append({"Metric": "Change %", "Value": gf_data["pct_change_str"], "Source": "Google Finance"})
+
+# Add TheAnnexure Data
+for key, value in annexure_data.items():
+    table_rows.append({"Metric": key, "Value": value, "Source": "TheAnnexure"})
+
+# Convert to DataFrame
+df_display = pd.DataFrame(table_rows)
+
+# Display ONLY the table
+st.markdown("<hr style='margin:0.5em 0 1em 0;'>", unsafe_allow_html=True)
 st.dataframe(
-    styled_df,
+    df_display,
     use_container_width=True,
-    hide_index=True,
-    height=150 # Compact height for a single row
+    height=750, # Taller table to fit all data
+    hide_index=True
 )
 
-# Display raw source data in an expander so you can verify it
-with st.expander("🔍 View Raw Scraped Data (Audit Trail)"):
-    st.write("**Google Finance:**", gf)
-    st.write("**TheAnnexure:**", ax)
-
+# Refresh Button
+st.markdown("<br>", unsafe_allow_html=True)
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
