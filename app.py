@@ -57,6 +57,28 @@ st.markdown(
         border: 1px solid var(--border-hairline);
         border-radius: 3px;
     }
+    
+    /* Styling for the Top Pick cards */
+    div[data-testid="stMetric"] {
+        background-color: var(--bg-panel);
+        border: 1px solid var(--border-hairline);
+        border-radius: 5px;
+        padding: 15px;
+    }
+    div[data-testid="stMetric"] label {
+        color: var(--text-secondary) !important;
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-size: 0.8rem !important;
+    }
+    div[data-testid="stMetricValue"] {
+        color: var(--accent-gold) !important;
+        font-family: 'IBM Plex Sans', sans-serif !important;
+        font-weight: 700 !important;
+    }
+    div[data-testid="stMetricDelta"] {
+        color: var(--text-primary) !important;
+    }
+    
     hr { border-color: var(--border-hairline) !important; }
     </style>
     """,
@@ -354,13 +376,92 @@ with st.spinner("Fetching data for 100+ companies (running in parallel for speed
 # Convert to DataFrame
 df_display = pd.DataFrame(table_rows)
 
-# Display the table (Rows = Companies, Columns = Metrics)
-st.markdown("<hr style='margin:0.5em 0 1em 0;'>", unsafe_allow_html=True)
+# ==========================================
+# 🎯 10% TARGET CALCULATION ENGINE (TOP SECTION)
+# ==========================================
+st.markdown("### 🎯 Top Picks for ~10% Return (1-2 Months)")
+st.markdown("Calculated by analyzing **52-week high recovery potential**, **valuation (P/E, P/B)**, and **ROE**.")
+
+def parse_percentage(val_str):
+    if not isinstance(val_str, str) or val_str == "N/A": return 0.0
+    try:
+        return float(val_str.replace('%', '').replace(',', '').strip())
+    except: return 0.0
+
+def parse_float(val_str):
+    if not isinstance(val_str, str) or val_str == "N/A": return 0.0
+    try:
+        return float(re.sub(r'[^\d.-]', '', val_str))
+    except: return 0.0
+
+# Create temporary numeric columns for calculation
+df_display['_price'] = df_display['Current Price (Google Finance)'].apply(parse_float)
+df_display['_pe'] = df_display['P/E Ratio (TheAnnexure)'].apply(parse_float)
+df_display['_pb'] = df_display['P/B Ratio (TheAnnexure)'].apply(parse_float)
+df_display['_roe'] = df_display['Return on equity (TheAnnexure)'].apply(parse_float)
+df_display['_down_52w'] = df_display['Against 52-week high (TheAnnexure)'].apply(parse_percentage)
+
+# Filter for valid candidates (Price exists, and stock is down from 52w high)
+candidates = df_display[(df_display['_price'] > 0) & (df_display['_down_52w'] < -5)].copy()
+
+# Scoring Logic for 10% Target
+def calculate_10pct_score(row):
+    score = 0
+    reasons = []
+    
+    # 1. Room to Recover (Down > 15% from High)
+    if row['_down_52w'] < -15: 
+        score += 3
+        reasons.append("Deep pullback from high")
+    
+    # 2. Valuation
+    if 0 < row['_pe'] < 20:
+        score += 2
+        reasons.append("Low P/E")
+    if 0 < row['_pb'] < 1.5:
+        score += 2
+        reasons.append("Attractive P/B")
+        
+    # 3. Quality (ROE)
+    if row['_roe'] > 15:
+        score += 3
+        reasons.append("Strong ROE")
+        
+    return pd.Series([score, " | ".join(reasons)])
+
+if not candidates.empty:
+    candidates[['_score', '_reason']] = candidates.apply(calculate_10pct_score, axis=1)
+    top_picks = candidates.sort_values(by='_score', ascending=False).head(3)
+    
+    cols = st.columns(3)
+    for idx, (index, row) in enumerate(top_picks.iterrows()):
+        target_price = row['_price'] * 1.10
+        
+        with cols[idx]:
+            st.metric(
+                label=f"🏆 {row['Ticker']} ({row['Industry']})",
+                value=f"Target: ₹{target_price:.2f}",
+                delta=f"Current: ₹{row['_price']:.2f}"
+            )
+            st.caption(f"**Why?** {row['_reason']}")
+            st.caption(f"52W High: {row['Against 52-week high (TheAnnexure)']} | ROE: {row['Return on equity (TheAnnexure)']}")
+else:
+    st.info("No strong 10% candidates found meeting the criteria right now.")
+
+# Clean up temp columns before displaying
+df_display = df_display.drop(columns=['_price', '_pe', '_pb', '_roe', '_down_52w'])
+
+# ==========================================
+# 📊 MAIN DATA MATRIX (BOTTOM SECTION)
+# ==========================================
+st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
+st.markdown("### 📋 Full Institutional Data Matrix")
+
 st.dataframe(
     df_display,
     use_container_width=True,
     hide_index=True,
-    height=min(750, 45 + 35 * len(df_display)) # Caps the height to prevent infinite page scrolling
+    height=min(750, 45 + 35 * len(df_display)) 
 )
 
 # Refresh Button
