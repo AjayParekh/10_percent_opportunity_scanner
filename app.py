@@ -380,7 +380,7 @@ df_display = pd.DataFrame(table_rows)
 # 🎯 10% TARGET CALCULATION ENGINE (TOP SECTION)
 # ==========================================
 st.markdown("### 🎯 Top Picks for ~10% Return (1-2 Months)")
-st.markdown("Calculated by analyzing **52-week high recovery potential**, **valuation (P/E, P/B)**, and **ROE**.")
+st.markdown("Calculated by analyzing **Book Value Support**, **52-week high recovery potential**, **valuation (P/E)**, and **ROE**.")
 
 def parse_percentage(val_str):
     if not isinstance(val_str, str) or val_str == "N/A": return 0.0
@@ -409,19 +409,23 @@ def calculate_10pct_score(row):
     score = 0
     reasons = []
     
-    # 1. Room to Recover (Down > 15% from High)
+    # 1. Book Value & Valuation (P/B Ratio)
+    if 0 < row['_pb'] < 1.0:
+        score += 4
+        reasons.append("Below Book Value (P/B < 1)")
+    elif 1.0 <= row['_pb'] < 1.5:
+        score += 2
+        reasons.append("Attractive P/B")
+        
+    if 0 < row['_pe'] < 20:
+        score += 2
+        reasons.append("Low P/E")
+        
+    # 2. Room to Recover (Down > 15% from High)
     if row['_down_52w'] < -15: 
         score += 3
         reasons.append("Deep pullback from high")
     
-    # 2. Valuation
-    if 0 < row['_pe'] < 20:
-        score += 2
-        reasons.append("Low P/E")
-    if 0 < row['_pb'] < 1.5:
-        score += 2
-        reasons.append("Attractive P/B")
-        
     # 3. Quality (ROE)
     if row['_roe'] > 15:
         score += 3
@@ -444,6 +448,7 @@ if not candidates.empty:
                 delta=f"Current: ₹{row['_price']:.2f}"
             )
             st.caption(f"**Why?** {row['_reason']}")
+            st.caption(f"**Book Value:** {row['Book Value (TheAnnexure)']} | **P/B:** {row['P/B Ratio (TheAnnexure)']}")
             st.caption(f"52W High: {row['Against 52-week high (TheAnnexure)']} | ROE: {row['Return on equity (TheAnnexure)']}")
 else:
     st.info("No strong 10% candidates found meeting the criteria right now.")
