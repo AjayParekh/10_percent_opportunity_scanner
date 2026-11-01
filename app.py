@@ -6,7 +6,7 @@ import re
 import time
 
 # --- 1. PAGE SETUP & UI LAYER ---
-st.set_page_config(page_title="Reliance - 10% Opportunity Scanner", layout="wide", page_icon="🏛️")
+st.set_page_config(page_title="Reliance & Bank of India - Opportunity Scanner", layout="wide", page_icon="🏛️")
 
 st.markdown(
     """
@@ -76,10 +76,13 @@ def robust_numeric_parse(val_str):
     except ValueError:
         return 0.0
 
-# --- 2. GOOGLE FINANCE SCRAPER ---
+# --- 2. GOOGLE FINANCE SCRAPER (parameterized for any NSE ticker) ---
 @st.cache_data(ttl=300)
-def fetch_google_finance_live_data():
-    url = "https://www.google.com/finance/beta/quote/RELIANCE:NSE?tab=financials"
+def fetch_google_finance_live_data(ticker: str):
+    """
+    ticker: NSE symbol (e.g., 'RELIANCE', 'BANKINDIA')
+    """
+    url = f"https://www.google.com/finance/beta/quote/{ticker}:NSE?tab=financials"
     metrics = {"price_str": "N/A", "price_val": 0.0, "pct_change_str": "N/A", "abs_change_str": "N/A"}
     
     try:
@@ -135,10 +138,13 @@ def fetch_google_finance_live_data():
     return metrics
 
 
-# --- 3. THEANNEXURE COMPREHENSIVE SCRAPER ---
+# --- 3. THEANNEXURE COMPREHENSIVE SCRAPER (parameterized by BSE code) ---
 @st.cache_data(ttl=3600)
-def fetch_annexure_all_details():
-    url = "https://theannexure.com/company/500325.html"
+def fetch_annexure_all_details(bse_code: str):
+    """
+    bse_code: BSE numeric code (e.g., '500325' for Reliance, '532149' for Bank of India)
+    """
+    url = f"https://theannexure.com/company/{bse_code}.html"
     data = {}
     
     try:
@@ -175,7 +181,7 @@ def fetch_annexure_all_details():
                             data[label] = val
                             
     except Exception as e:
-        st.error(f"Error scraping TheAnnexure: {e}")
+        st.error(f"Error scraping TheAnnexure for {bse_code}: {e}")
         
     return data
 
@@ -183,39 +189,69 @@ def fetch_annexure_all_details():
 # --- 4. MAIN APP LAYOUT ---
 st.markdown(
     """
-    <div class="omc-eyebrow">Institutional Coverage · Energy</div>
-    <div class="omc-title">🏛️ Reliance Industries Ltd</div>
-    <div class="omc-subtitle">Comprehensive data matrix for Reliance, tagged by source.</div>
+    <div class="omc-eyebrow">Institutional Coverage · Energy & Financials</div>
+    <div class="omc-title">🏛️ Reliance Industries & Bank of India</div>
+    <div class="omc-subtitle">Side-by-side data matrix, tagged by source.</div>
     """,
     unsafe_allow_html=True
 )
 
-# Fetch Data
+# Company configuration
+COMPANIES = {
+    "Reliance Industries": {"nse": "RELIANCE", "bse": "500325"},
+    "Bank of India":       {"nse": "BANKINDIA", "bse": "532149"},
+}
+
+# Fetch Data for all companies
 with st.spinner("Fetching data from Google Finance and TheAnnexure..."):
-    gf_data = fetch_google_finance_live_data()
-    annexure_data = fetch_annexure_all_details()
+    gf_data_all = {}
+    annexure_data_all = {}
+    for name, codes in COMPANIES.items():
+        gf_data_all[name] = fetch_google_finance_live_data(codes["nse"])
+        annexure_data_all[name] = fetch_annexure_all_details(codes["bse"])
 
-# Build the Unified Table
+# --- BUILD HORIZONTAL TABLE (metrics as rows, companies as columns) ---
+# Collect all unique metrics while preserving a sensible order
+ordered_metrics = [
+    "Current Price", "Absolute Change", "Change %",
+    "Market Cap", "P/E Ratio", "P/B Ratio", "EPS", "Book Value"
+]
+
+# Append any additional metrics discovered from TheAnnexure (beyond the core set)
+extra_metrics = set()
+for name in COMPANIES:
+    for k in annexure_data_all[name].keys():
+        if k not in ordered_metrics:
+            extra_metrics.add(k)
+ordered_metrics.extend(sorted(extra_metrics))
+
+# Build rows
 table_rows = []
+for metric in ordered_metrics:
+    row = {"Metric": metric}
+    for company_name in COMPANIES:
+        # Prefer Google Finance for price-related metrics
+        if metric in ("Current Price", "Absolute Change", "Change %"):
+            val = gf_data_all[company_name].get(
+                {"Current Price": "price_str",
+                 "Absolute Change": "abs_change_str",
+                 "Change %": "pct_change_str"}[metric],
+                "N/A"
+            )
+        else:
+            # Otherwise use TheAnnexure data
+            val = annexure_data_all[company_name].get(metric, "—")
+        row[company_name] = val
+    table_rows.append(row)
 
-# Add Google Finance Data
-table_rows.append({"Metric": "Current Price", "Value": gf_data["price_str"], "Source": "Google Finance"})
-table_rows.append({"Metric": "Absolute Change", "Value": gf_data["abs_change_str"], "Source": "Google Finance"})
-table_rows.append({"Metric": "Change %", "Value": gf_data["pct_change_str"], "Source": "Google Finance"})
-
-# Add TheAnnexure Data
-for key, value in annexure_data.items():
-    table_rows.append({"Metric": key, "Value": value, "Source": "TheAnnexure"})
-
-# Convert to DataFrame
 df_display = pd.DataFrame(table_rows)
 
-# Display ONLY the table
+# Display horizontal table
 st.markdown("<hr style='margin:0.5em 0 1em 0;'>", unsafe_allow_html=True)
 st.dataframe(
     df_display,
     use_container_width=True,
-    height=750, # Taller table to fit all data
+    height=min(750, 40 + 35 * len(df_display)),  # dynamic height
     hide_index=True
 )
 
