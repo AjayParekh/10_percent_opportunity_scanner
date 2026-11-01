@@ -5,7 +5,7 @@ import pandas as pd
 import re
 import time
 
-# --- 1. PAGE SETUP & UI LAYER (From your reference code) ---
+# --- 1. PAGE SETUP & UI LAYER ---
 st.set_page_config(page_title="Reliance - 10% Opportunity Scanner", layout="wide", page_icon="🏛️")
 
 st.markdown(
@@ -20,8 +20,6 @@ st.markdown(
         --text-primary: #E7EAEE;
         --text-secondary: #8891A0;
         --accent-gold: #C6992F;
-        --signal-green: #34D399;
-        --signal-red: #F87171;
     }
 
     .stApp {
@@ -46,13 +44,11 @@ st.markdown(
         color: var(--text-primary);
         letter-spacing: -0.01em;
         margin: 0 0 0.35rem 0;
-        line-height: 1.15;
     }
     .omc-subtitle {
         font-family: 'IBM Plex Sans', sans-serif;
         font-size: 0.95rem;
         color: var(--text-secondary);
-        max-width: 720px;
         margin-bottom: 1.1rem;
     }
 
@@ -65,7 +61,6 @@ st.markdown(
     div[data-testid="stMetric"] label {
         font-family: 'IBM Plex Mono', monospace !important;
         font-size: 0.7rem !important;
-        letter-spacing: 0.06em;
         color: var(--text-secondary) !important;
         text-transform: uppercase;
     }
@@ -75,8 +70,11 @@ st.markdown(
         font-weight: 600 !important;
         font-size: 1.35rem !important;
     }
-    div[data-testid="stMetricDelta"] {
-        font-family: 'IBM Plex Mono', monospace !important;
+    
+    /* Table Styling */
+    div[data-testid="stDataFrame"] {
+        border: 1px solid var(--border-hairline);
+        border-radius: 3px;
     }
     hr { border-color: var(--border-hairline) !important; }
     </style>
@@ -84,32 +82,28 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# --- 2. EXACT GOOGLE FINANCE SCRAPER (With the Absolute Change Fallback) ---
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9"
 }
 
 def robust_numeric_parse(val_str):
-    if not val_str or pd.isna(val_str):
-        return 0.0
+    if not val_str or pd.isna(val_str): return 0.0
     try:
         cleaned = re.sub(r'[^\d.-]', '', str(val_str).replace(',', '').strip())
         return float(cleaned) if cleaned else 0.0
     except ValueError:
         return 0.0
 
+# --- 2. GOOGLE FINANCE SCRAPER ---
 @st.cache_data(ttl=300)
 def fetch_google_finance_live_data():
     url = "https://www.google.com/finance/beta/quote/RELIANCE:NSE?tab=financials"
-    metrics = {
-        "price_str": "N/A", "price_val": 0.0, "pct_change_str": "N/A", "abs_change_str": "N/A"
-    }
+    metrics = {"price_str": "N/A", "price_val": 0.0, "pct_change_str": "N/A", "abs_change_str": "N/A"}
     
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
-        if res.status_code != 200:
-            return metrics
+        if res.status_code != 200: return metrics
         soup = BeautifulSoup(res.text, 'html.parser')
         
         price_el = soup.find(attrs={"data-last-price": True}) or soup.find(class_="YMlKec fxKbKc")
@@ -138,45 +132,33 @@ def fetch_google_finance_live_data():
             metrics["pct_change_str"] = f"{pct_part}%"
             metrics["abs_change_str"] = abs_part
         else:
-            # FALLBACK LOGIC FROM YOUR REFERENCE CODE
             change_text = ""
             if price_el:
                 parent = price_el.find_parent()
                 if parent:
                     sibling_divs = parent.find_all(string=re.compile(r'%'))
-                    if sibling_divs:
-                        change_text = sibling_divs[0].strip()
+                    if sibling_divs: change_text = sibling_divs[0].strip()
             if change_text:
                 clean_text = change_text.replace("Today", "").replace("After hours", "").strip()
                 extracted_metrics = re.findall(r'([+-]?\d+(?:\.\d+)?%?)', clean_text)
-                if extracted_metrics:
-                    metrics["pct_change_str"] = extracted_metrics[0]
+                if extracted_metrics: metrics["pct_change_str"] = extracted_metrics[0]
             
-            # Mathematical calculation for Absolute Change
             try:
                 if metrics["price_val"] > 0 and metrics["pct_change_str"] != "N/A":
                     raw_pct = float(re.sub(r'[^\d.-]', '', metrics["pct_change_str"]))
                     prev_close = metrics["price_val"] / (1 + (raw_pct / 100.0))
                     calculated_abs_change = metrics["price_val"] - prev_close
                     metrics["abs_change_str"] = f"{'+' if calculated_abs_change > 0 else ''}{calculated_abs_change:.2f}"
-            except Exception:
-                pass
-                
-    except Exception as e:
-        pass
-        
+            except Exception: pass
+    except Exception: pass
     return metrics
 
 
-# --- 3. THEANNEXURE SCRAPER (Fixed Debt to Equity) ---
+# --- 3. THEANNEXURE COMPREHENSIVE SCRAPER ---
 @st.cache_data(ttl=3600)
-def fetch_annexure_fundamentals():
+def fetch_annexure_all_details():
     url = "https://theannexure.com/company/500325.html"
-    metrics = {
-        "Market Cap": "N/A", "P/E Ratio": "N/A", "P/B Ratio": "N/A",
-        "EPS": "N/A", "Book Value": "N/A", "ROE": "N/A",
-        "Operating Margin": "N/A", "Net Margin": "N/A", "Debt to Equity": "N/A"
-    }
+    data = {}
     
     try:
         res = requests.get(url, headers=HEADERS, timeout=15)
@@ -184,38 +166,40 @@ def fetch_annexure_fundamentals():
         soup = BeautifulSoup(res.content, 'html.parser')
         text = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True))
         
-        # Top Summary
+        # 1. Extract Top Summary Cards via Regex
         mc = re.search(r"Market cap ₹([\d,\.]+) cr", text)
-        if mc: metrics["Market Cap"] = f"₹{mc.group(1)} Cr"
+        if mc: data["Market Cap"] = f"₹{mc.group(1)} Cr"
         
         pe_pb = re.search(r"P/E · P/B ([\d\.]+)× · ([\d\.]+)×", text)
         if pe_pb:
-            metrics["P/E Ratio"] = f"{pe_pb.group(1)}×"
-            metrics["P/B Ratio"] = f"{pe_pb.group(2)}×"
+            data["P/E Ratio"] = f"{pe_pb.group(1)}×"
+            data["P/B Ratio"] = f"{pe_pb.group(2)}×"
             
         eps = re.search(r"EPS ₹([\d\.]+)", text)
-        if eps: metrics["EPS"] = f"₹{eps.group(1)}"
+        if eps: data["EPS"] = f"₹{eps.group(1)}"
         
         bv = re.search(r"BV ₹([\d\.]+)", text)
-        if bv: metrics["Book Value"] = f"₹{bv.group(1)}"
+        if bv: data["Book Value"] = f"₹{bv.group(1)}"
 
-        # Tables (ROE, Margins, Debt/Equity) - Checking BOTH th and td
-        for row in soup.find_all('tr'):
-            cells = row.find_all(['th', 'td'])
-            if len(cells) >= 2:
-                label = re.sub(r'\s+', ' ', cells[0].get_text(strip=True).lower())
-                val = cells[1].get_text(strip=True)
-                
-                if "return on equity" in label: metrics["ROE"] = val
-                elif "operating margin" in label: metrics["Operating Margin"] = val
-                elif "net margin" in label: metrics["Net Margin"] = val
-                elif "debt to equity" in label: 
-                    metrics["Debt to Equity"] = val
+        # 2. Extract EVERYTHING from Tables (Aggressive parsing)
+        for table in soup.find_all('table'):
+            for row in table.find_all('tr'):
+                cells = row.find_all(['th', 'td'])
+                if len(cells) >= 2:
+                    # Clean label and value
+                    label = re.sub(r'\s+', ' ', cells[0].get_text(strip=True))
+                    val = re.sub(r'\s+', ' ', cells[1].get_text(strip=True))
                     
+                    # Filter out empty rows or headers
+                    if label and val and label.lower() not in ["metric", "ratio", "period"]:
+                        # If it's not already in our dictionary, add it
+                        if label not in data:
+                            data[label] = val
+                            
     except Exception as e:
-        pass
+        st.error(f"Error scraping TheAnnexure: {e}")
         
-    return metrics
+    return data
 
 
 # --- 4. MAIN APP LAYOUT ---
@@ -229,36 +213,47 @@ st.markdown(
 )
 
 # Fetch Data
-with st.spinner("Fetching live data..."):
-    live_data = fetch_google_finance_live_data()
-    fund_data = fetch_annexure_fundamentals()
+with st.spinner("Fetching live data and deep fundamentals..."):
+    gf_data = fetch_google_finance_live_data()
+    annexure_data = fetch_annexure_all_details()
 
-# Display Google Finance Live Data
+# --- Display Top Live Data (Google Finance) ---
 st.markdown('<div class="omc-eyebrow" style="margin-top:1rem;">Live Market Price · Google Finance</div>', unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Current Market Price", live_data["price_str"])
-col2.metric("Absolute Change", live_data["abs_change_str"])
-col3.metric("Change %", live_data["pct_change_str"])
+col1.metric("Current Market Price", gf_data["price_str"])
+col2.metric("Absolute Change", gf_data["abs_change_str"])
+col3.metric("Change %", gf_data["pct_change_str"])
 
 st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
 
-# Display TheAnnexure Fundamentals
-st.markdown('<div class="omc-eyebrow">Fundamental Metrics · TheAnnexure</div>', unsafe_allow_html=True)
+# --- Display Detailed Table (Combining Sources) ---
+st.markdown('<div class="omc-eyebrow">Comprehensive Data Matrix · Source Tagged</div>', unsafe_allow_html=True)
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Market Cap", fund_data["Market Cap"])
-c2.metric("P/E Ratio", fund_data["P/E Ratio"])
-c3.metric("Debt to Equity", fund_data["Debt to Equity"])
-c4.metric("ROE", fund_data["ROE"])
+# Build a unified list of dictionaries for the table
+table_rows = []
 
-c5, c6, c7, c8 = st.columns(4)
-c5.metric("Operating Margin", fund_data["Operating Margin"])
-c6.metric("Net Margin", fund_data["Net Margin"])
-c7.metric("EPS", fund_data["EPS"])
-c8.metric("Book Value", fund_data["Book Value"])
+# Add Google Finance Data
+table_rows.append({"Metric": "Current Price", "Value": gf_data["price_str"], "Source": "Google Finance"})
+table_rows.append({"Metric": "Absolute Change", "Value": gf_data["abs_change_str"], "Source": "Google Finance"})
+table_rows.append({"Metric": "Change %", "Value": gf_data["pct_change_str"], "Source": "Google Finance"})
 
-# Refresh button
+# Add TheAnnexure Data
+for key, value in annexure_data.items():
+    table_rows.append({"Metric": key, "Value": value, "Source": "TheAnnexure"})
+
+# Convert to DataFrame
+df_display = pd.DataFrame(table_rows)
+
+# Display the table
+st.dataframe(
+    df_display,
+    use_container_width=True,
+    height=600, # Fixed height so it doesn't take up the whole page
+    hide_index=True
+)
+
+# Refresh Button
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear()
