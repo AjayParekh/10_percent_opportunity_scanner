@@ -4,7 +4,7 @@ import pandas as pd
 import re
 import sqlite3
 import concurrent.futures
-import time
+import yfinance as yf
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -47,29 +47,21 @@ def get_companies():
 def fetch_data(comp):
     ticker = comp['ticker']
     bse = comp['bse']
-    
-    gf_url = f"https://www.google.com/finance/quote/{ticker}:NSE"
     annex_url = f"https://theannexure.com/company/{bse}.html"
     
     price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
     
-    # --- 1. FETCH PRICE (Google Finance with Batching Sleep) ---
+    # --- 1. FETCH PRICE (yfinance) ---
     try:
-        time.sleep(2) # MANDATORY: Wait 2 seconds to avoid Google Ban
-        res = requests.get(gf_url, headers=HEADERS, timeout=10)
-        
-        # Robust Regex to extract price from raw HTML
-        match = re.search(r'data-last-price="([\d\.]+)"', res.text)
-        if match:
-            price = float(match.group(1))
-        else:
-            # Fallback to BeautifulSoup if regex fails
-            soup = BeautifulSoup(res.text, 'html.parser')
-            price_el = soup.find(class_="YMlKec fxKbKc")
-            if price_el:
-                price = float(re.sub(r'[^\d.]', '', price_el.text))
+        # NSE tickers require a .NS suffix
+        ticker_yf = f"{ticker}.NS"
+        stock = yf.Ticker(ticker_yf)
+        # Fetch 1 day of data to get the latest close price
+        hist = stock.history(period="1d")
+        if not hist.empty:
+            price = hist['Close'].iloc[-1]
     except Exception as e:
-        print(f"Google error for {ticker}: {e}")
+        print(f"yfinance error for {ticker}: {e}")
     
     # --- 2. FETCH FUNDAMENTALS (TheAnnexure) ---
     try:
@@ -106,13 +98,11 @@ def calculate_score(row):
 
 if __name__ == "__main__":
     companies = get_companies()
-    print(f"Found Top {len(companies)} companies. Starting partitioned scrape...")
+    print(f"Found Top {len(companies)} companies. Starting scrape...")
     
     results = []
-    # We reduce max_workers to 3. This means only 3 companies are scraped at a time.
-    # Combined with time.sleep(2), we process about 1 company per second. 
-    # 500 companies will take about 8-10 minutes.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    # Using 10 workers for yfinance, it's very fast and reliable
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         results = list(executor.map(fetch_data, companies))
         
     df = pd.DataFrame(results)
