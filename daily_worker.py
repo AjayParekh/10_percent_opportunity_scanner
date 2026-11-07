@@ -6,7 +6,15 @@ import sqlite3
 import concurrent.futures
 from datetime import datetime
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+# --- UPDATED HEADERS TO BYPASS GITHUB BLOCK ---
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1"
+}
 DB_FILE = "market_snapshot.db"
 
 def get_companies():
@@ -29,8 +37,7 @@ def get_companies():
                         bse_code = link['href'].split('/')[-1].replace('.html', '')
                         companies.append({"ticker": ticker, "bse": bse_code})
         
-        # --- IMPORTANT: LIMIT FOR TESTING ---
-        # Remove the [:50] later to scrape all 5000
+        # LIMIT FOR TESTING (50 companies)
         return companies[:50] 
     except Exception as e:
         print(f"Error fetching list: {e}")
@@ -40,23 +47,40 @@ def fetch_data(comp):
     ticker = comp['ticker']
     bse = comp['bse']
     
-    gf_url = f"https://www.google.com/finance/beta/quote/{ticker}:NSE"
+    # Changed to standard Google Finance URL (more reliable than /beta/)
+    gf_url = f"https://www.google.com/finance/quote/{ticker}:NSE"
     annex_url = f"https://theannexure.com/company/{bse}.html"
     
     price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
     
+    # 1. Fetch Google Finance
     try:
-        # Google Finance (5 sec timeout)
-        res = requests.get(gf_url, headers=HEADERS, timeout=5)
+        res = requests.get(gf_url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        price_el = soup.find(class_="YMlKec fxKbKc")
+        
+        # Robust price finding methods
+        price_el = soup.find(attrs={"data-last-price": True})
         if price_el:
-            price = float(re.sub(r'[^\d.]', '', price_el.text))
-    except: pass
+            price = float(price_el["data-last-price"])
+        else:
+            price_el = soup.find(class_="YMlKec fxKbKc")
+            if price_el:
+                price = float(re.sub(r'[^\d.]', '', price_el.text))
+            else:
+                # Fallback: search for ₹ symbol
+                for div in soup.find_all("div"):
+                    if div.text and div.text.strip().startswith("₹") and len(div.text.strip()) < 15:
+                        try:
+                            price = float(re.sub(r'[^\d.]', '', div.text))
+                            break
+                        except:
+                            pass
+    except Exception as e:
+        pass
     
+    # 2. Fetch TheAnnexure
     try:
-        # TheAnnexure (5 sec timeout)
-        res = requests.get(annex_url, headers=HEADERS, timeout=5)
+        res = requests.get(annex_url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.content, 'html.parser')
         text = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True))
         
@@ -70,8 +94,10 @@ def fetch_data(comp):
                 label, val = cells[0].get_text(strip=True).lower(), cells[1].get_text(strip=True)
                 if "return on equity" in label: roe = val
                 elif "against 52-week high" in label: drop_52w = val
-    except: pass
+    except Exception as e:
+        pass
         
+    print(f"Scraped {ticker}: Price={price}")
     return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w}
 
 def calculate_score(row):
