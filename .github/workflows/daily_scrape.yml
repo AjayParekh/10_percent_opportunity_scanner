@@ -1,0 +1,30 @@
+name: Daily Market Scanner
+on:
+  schedule:
+    - cron: '30 10 * * *' # Runs at 10:30 UTC (4:00 PM IST) daily
+  workflow_dispatch:      # Allows you to manually run it from GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 pandas
+        
+      - name: Run Worker
+        run: python daily_worker.py
+        
+      - name: Commit updated database
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add market_snapshot.db
+          git commit -m "Automated daily market update" || echo "No changes to commit"
+          git push
