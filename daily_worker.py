@@ -8,6 +8,7 @@ from datetime import datetime
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
 DB_FILE = "market_snapshot.db"
@@ -41,31 +42,52 @@ def fetch_data(comp):
     bse = comp['bse']
     gf_url = f"https://www.google.com/finance/quote/{ticker}:NSE"
     annex_url = f"https://theannexure.com/company/{bse}.html"
+    
     price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
     
+    # --- 1. BULLETPROOF GOOGLE FINANCE PRICE ---
     try:
-        res = requests.get(gf_url, headers=HEADERS, timeout=8)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        price_el = soup.find(attrs={"data-last-price": True}) or soup.find(class_="YMlKec fxKbKc")
-        if price_el:
-            price = float(re.sub(r'[^\d.]', '', price_el.text if hasattr(price_el, 'text') else price_el["data-last-price"]))
-    except: pass
+        res = requests.get(gf_url, headers=HEADERS, timeout=10)
+        
+        # Method A: Regex on the raw HTML source (Bypasses all bot blocks)
+        match = re.search(r'data-last-price="([\d\.]+)"', res.text)
+        if match:
+            price = float(match.group(1))
+        else:
+            # Method B: BeautifulSoup fallback
+            soup = BeautifulSoup(res.text, 'html.parser')
+            price_el = soup.find(class_="YMlKec fxKbKc")
+            if price_el:
+                price = float(re.sub(r'[^\d.]', '', price_el.text))
+            else:
+                # Method C: Generic Rupee symbol search
+                match = re.search(r'₹([\d,]+\.\d{2})', res.text)
+                if match:
+                    price = float(match.group(1).replace(',', ''))
+                    
+    except Exception as e:
+        print(f"Price error for {ticker}: {e}")
     
+    # --- 2. THEANNEXURE FUNDAMENTALS ---
     try:
-        res = requests.get(annex_url, headers=HEADERS, timeout=8)
+        res = requests.get(annex_url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.content, 'html.parser')
         text = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True))
+        
         pe_pb = re.search(r"P/E · P/B ([\d\.]+)× · ([\d\.]+)×", text)
         if pe_pb:
             pe, pb = pe_pb.group(1), pe_pb.group(2)
+            
         for row in soup.find_all('tr'):
             cells = row.find_all(['th', 'td'])
             if len(cells) >= 2:
                 label, val = cells[0].get_text(strip=True).lower(), cells[1].get_text(strip=True)
                 if "return on equity" in label: roe = val
                 elif "against 52-week high" in label: drop_52w = val
-    except: pass
+    except Exception as e:
+        print(f"Fundamental error for {ticker}: {e}")
         
+    print(f"Scraped {ticker}: Price=₹{price}")
     return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w}
 
 def calculate_score(row):
