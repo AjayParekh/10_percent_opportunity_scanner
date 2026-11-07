@@ -8,7 +8,6 @@ import time
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
 DB_FILE = "market_snapshot.db"
@@ -21,16 +20,26 @@ def get_companies():
         soup = BeautifulSoup(res.content, 'html.parser')
         table = soup.find('table')
         companies = []
+        
         if table:
             for row in table.find_all('tr')[1:]: 
                 cols = row.find_all('td')
-                if len(cols) > 1:
+                if len(cols) > 2:
                     ticker = cols[1].text.strip()
+                    mc_text = cols[2].text.strip().replace('₹', '').replace('Cr', '').replace(',', '').strip()
+                    try:
+                        mc_val = float(mc_text)
+                    except:
+                        mc_val = 0.0
+                        
                     link = cols[0].find('a')
                     if link and 'company/' in link.get('href', ''):
                         bse_code = link['href'].split('/')[-1].replace('.html', '')
-                        companies.append({"ticker": ticker, "bse": bse_code})
-        return companies # Scrapes all 5000+
+                        companies.append({"ticker": ticker, "bse": bse_code, "market_cap": mc_val})
+        
+        # Sort by Market Cap descending and take Top 500
+        companies = sorted(companies, key=lambda x: x['market_cap'], reverse=True)
+        return companies[:500] 
     except Exception as e:
         print(f"Error fetching list: {e}")
         return []
@@ -39,29 +48,28 @@ def fetch_data(comp):
     ticker = comp['ticker']
     bse = comp['bse']
     
-    annex_url = f"https://theannexure.com/company/{bse}.html"
-    screener_url = f"https://www.screener.in/company/{ticker}/"
     gf_url = f"https://www.google.com/finance/quote/{ticker}:NSE"
+    annex_url = f"https://theannexure.com/company/{bse}.html"
     
     price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
     
-    # --- 1. FETCH PRICE (Screener.in Primary, Google Backup) ---
-    # Screener is much more reliable for GitHub Actions
+    # --- 1. FETCH PRICE (Google Finance with Batching Sleep) ---
     try:
-        res = requests.get(screener_url, headers=HEADERS, timeout=10)
-        price_match = re.search(r'<div class="number">₹\s*([\d,]+\.\d+)</div>', res.text)
-        if price_match:
-            price = float(price_match.group(1).replace(',', ''))
-    except: pass
-
-    # Fallback to Google Finance if Screener fails
-    if price == 0.0:
-        try:
-            res = requests.get(gf_url, headers=HEADERS, timeout=10)
-            match = re.search(r'data-last-price="([\d\.]+)"', res.text)
-            if match:
-                price = float(match.group(1))
-        except: pass
+        time.sleep(2) # MANDATORY: Wait 2 seconds to avoid Google Ban
+        res = requests.get(gf_url, headers=HEADERS, timeout=10)
+        
+        # Robust Regex to extract price from raw HTML
+        match = re.search(r'data-last-price="([\d\.]+)"', res.text)
+        if match:
+            price = float(match.group(1))
+        else:
+            # Fallback to BeautifulSoup if regex fails
+            soup = BeautifulSoup(res.text, 'html.parser')
+            price_el = soup.find(class_="YMlKec fxKbKc")
+            if price_el:
+                price = float(re.sub(r'[^\d.]', '', price_el.text))
+    except Exception as e:
+        print(f"Google error for {ticker}: {e}")
     
     # --- 2. FETCH FUNDAMENTALS (TheAnnexure) ---
     try:
@@ -79,7 +87,8 @@ def fetch_data(comp):
                 label, val = cells[0].get_text(strip=True).lower(), cells[1].get_text(strip=True)
                 if "return on equity" in label: roe = val
                 elif "against 52-week high" in label: drop_52w = val
-    except: pass
+    except Exception as e:
+        print(f"Annexure error for {ticker}: {e}")
         
     print(f"Scraped {ticker}: Price=₹{price}")
     return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w}
@@ -97,11 +106,13 @@ def calculate_score(row):
 
 if __name__ == "__main__":
     companies = get_companies()
-    print(f"Found {len(companies)} companies. Starting scrape...")
+    print(f"Found Top {len(companies)} companies. Starting partitioned scrape...")
     
     results = []
-    # Using 30 threads to scrape 5000 companies in ~15 minutes
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+    # We reduce max_workers to 3. This means only 3 companies are scraped at a time.
+    # Combined with time.sleep(2), we process about 1 company per second. 
+    # 500 companies will take about 8-10 minutes.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         results = list(executor.map(fetch_data, companies))
         
     df = pd.DataFrame(results)
