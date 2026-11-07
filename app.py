@@ -11,24 +11,21 @@ SNAPSHOT_DB = "market_snapshot.db"
 
 def get_data():
     if os.path.exists(SNAPSHOT_DB):
-        conn = sqlite3.connect(SNAPSHOT_DB)
         try:
-            # Get top 20 highest scoring stocks
+            conn = sqlite3.connect(SNAPSHOT_DB)
             df = pd.read_sql_query("SELECT * FROM daily_snapshot ORDER BY score DESC LIMIT 20", conn)
             conn.close()
             return df
-        except:
+        except Exception as e:
             return pd.DataFrame()
     return pd.DataFrame()
 
 df = get_data()
 
 if df.empty:
-    st.error("Database not found! Please run the GitHub Action first to generate market_snapshot.db.")
+    st.error("Database not found or is empty! Please go to GitHub -> Actions -> Run Workflow.")
 else:
     st.markdown("### 🎯 Top Opportunities Today")
-    
-    # Show top 3 as cards
     top_3 = df.head(3)
     cols = st.columns(3)
     for idx, (_, row) in enumerate(top_3.iterrows()):
@@ -39,10 +36,5 @@ else:
             st.caption(f"**P/B:** {row['pb']} | **Drop:** {row['drop_52w']}")
             
     st.divider()
-    
     st.markdown("### 📋 Full Scanned Matrix")
-    st.dataframe(
-        df[['ticker', 'price', 'pe', 'pb', 'roe', 'drop_52w', 'score']],
-        use_container_width=True,
-        hide_index=True
-    )
+    st.dataframe(df[['ticker', 'price', 'pe', 'pb', 'roe', 'drop_52w', 'score']], use_container_width=True, hide_index=True)
