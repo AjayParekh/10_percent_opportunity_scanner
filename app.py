@@ -115,13 +115,22 @@ def init_tracker():
 
 init_tracker()
 
-# NO CACHE HERE: This ensures when the app refreshes, it reads the newest data from the DB
+# --- 4. DATA FETCHING (WITH TIE-BREAKER) ---
 def get_snapshot_data():
     if os.path.exists(SNAPSHOT_DB):
         conn = sqlite3.connect(SNAPSHOT_DB)
         try:
-            df = pd.read_sql_query("SELECT * FROM daily_snapshot ORDER BY score DESC", conn)
+            df = pd.read_sql_query("SELECT * FROM daily_snapshot", conn)
             conn.close()
+            
+            # Convert P/B to float safely for sorting (missing values go to the bottom)
+            df['pb_float'] = pd.to_numeric(df['pb'], errors='coerce').fillna(999.0)
+            
+            # Sort by Score (descending), then by P/B (ascending) as the tie-breaker
+            df = df.sort_values(by=['score', 'pb_float'], ascending=[False, True])
+            
+            # Drop the temporary sorting column
+            df = df.drop(columns=['pb_float'])
             return df
         except: return pd.DataFrame()
     return pd.DataFrame()
@@ -132,7 +141,7 @@ def get_tracker_data():
     conn.close()
     return df
 
-# --- 4. APP HEADER ---
+# --- 5. APP HEADER ---
 st.markdown(
     """
     <div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>
@@ -147,12 +156,12 @@ df = get_snapshot_data()
 # Create Tabs
 tab1, tab2 = st.tabs(["🎯 Live Scanner & 10% Engine", "📈 Performance Tracker"])
 
-# --- 5. TAB 1: LIVE SCANNER ---
+# --- 6. TAB 1: LIVE SCANNER ---
 with tab1:
     if df.empty:
         st.error("Database not found. Please run the GitHub Action to generate market_snapshot.db.")
     else:
-        st.markdown("### 🎯 Top 3 Opportunities Today")
+        st.markdown("### 🎯 Top 3 Opportunities Today (Tie-breaker: Lowest P/B)")
         
         top_3 = df.head(3)
         cols = st.columns(3)
@@ -202,7 +211,7 @@ with tab1:
             hide_index=True
         )
 
-# --- 6. TAB 2: PERFORMANCE TRACKER ---
+# --- 7. TAB 2: PERFORMANCE TRACKER ---
 with tab2:
     st.markdown("### 📈 Historical Performance")
     tracker_df = get_tracker_data()
@@ -237,7 +246,7 @@ with tab2:
             
         st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
-# --- 7. MANUAL REFRESH BUTTON ---
+# --- 8. MANUAL REFRESH BUTTON ---
 st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
 if st.button("🔄 Force Refresh Now"):
     st.rerun()
