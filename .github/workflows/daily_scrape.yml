@@ -1,8 +1,11 @@
 name: Daily Market Scanner
 on:
   schedule:
-    - cron: '30 10 * * *' # Runs at 10:30 UTC (4:00 PM IST) daily
-  workflow_dispatch:      # Allows you to manually run it from GitHub UI
+    - cron: '30 10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   scrape:
