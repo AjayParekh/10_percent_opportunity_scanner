@@ -30,7 +30,7 @@ def get_companies():
                     if link and 'company/' in link.get('href', ''):
                         bse_code = link['href'].split('/')[-1].replace('.html', '')
                         companies.append({"ticker": ticker, "bse": bse_code})
-        return companies # NO LIMIT! Scrapes all 5000+
+        return companies # Scrapes all 5000+
     except Exception as e:
         print(f"Error fetching list: {e}")
         return []
@@ -38,25 +38,32 @@ def get_companies():
 def fetch_data(comp):
     ticker = comp['ticker']
     bse = comp['bse']
-    gf_url = f"https://www.google.com/finance/quote/{ticker}:NSE"
+    
     annex_url = f"https://theannexure.com/company/{bse}.html"
+    screener_url = f"https://www.screener.in/company/{ticker}/"
+    gf_url = f"https://www.google.com/finance/quote/{ticker}:NSE"
     
     price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
     
-    # 1. Price (Google Finance)
+    # --- 1. FETCH PRICE (Screener.in Primary, Google Backup) ---
+    # Screener is much more reliable for GitHub Actions
     try:
-        res = requests.get(gf_url, headers=HEADERS, timeout=10)
-        match = re.search(r'data-last-price="([\d\.]+)"', res.text)
-        if match:
-            price = float(match.group(1))
-        else:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            price_el = soup.find(class_="YMlKec fxKbKc")
-            if price_el:
-                price = float(re.sub(r'[^\d.]', '', price_el.text))
+        res = requests.get(screener_url, headers=HEADERS, timeout=10)
+        price_match = re.search(r'<div class="number">₹\s*([\d,]+\.\d+)</div>', res.text)
+        if price_match:
+            price = float(price_match.group(1).replace(',', ''))
     except: pass
+
+    # Fallback to Google Finance if Screener fails
+    if price == 0.0:
+        try:
+            res = requests.get(gf_url, headers=HEADERS, timeout=10)
+            match = re.search(r'data-last-price="([\d\.]+)"', res.text)
+            if match:
+                price = float(match.group(1))
+        except: pass
     
-    # 2. Fundamentals (TheAnnexure)
+    # --- 2. FETCH FUNDAMENTALS (TheAnnexure) ---
     try:
         res = requests.get(annex_url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.content, 'html.parser')
@@ -74,6 +81,7 @@ def fetch_data(comp):
                 elif "against 52-week high" in label: drop_52w = val
     except: pass
         
+    print(f"Scraped {ticker}: Price=₹{price}")
     return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w}
 
 def calculate_score(row):
