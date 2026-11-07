@@ -4,7 +4,7 @@ import pandas as pd
 import re
 import sqlite3
 import concurrent.futures
-from datetime import datetime
+import time
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -14,10 +14,10 @@ HEADERS = {
 DB_FILE = "market_snapshot.db"
 
 def get_companies():
-    print("Fetching company list...")
+    print("Fetching full company list from TheAnnexure...")
     url = "https://theannexure.com/companies.html"
     try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
+        res = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(res.content, 'html.parser')
         table = soup.find('table')
         companies = []
@@ -30,9 +30,7 @@ def get_companies():
                     if link and 'company/' in link.get('href', ''):
                         bse_code = link['href'].split('/')[-1].replace('.html', '')
                         companies.append({"ticker": ticker, "bse": bse_code})
-        
-        # TESTING: Limit to 50 companies. REMOVE [:50] LATER for 5000!
-        return companies[:50] 
+        return companies # NO LIMIT! Scrapes all 5000+
     except Exception as e:
         print(f"Error fetching list: {e}")
         return []
@@ -45,30 +43,20 @@ def fetch_data(comp):
     
     price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
     
-    # --- 1. BULLETPROOF GOOGLE FINANCE PRICE ---
+    # 1. Price (Google Finance)
     try:
         res = requests.get(gf_url, headers=HEADERS, timeout=10)
-        
-        # Method A: Regex on the raw HTML source (Bypasses all bot blocks)
         match = re.search(r'data-last-price="([\d\.]+)"', res.text)
         if match:
             price = float(match.group(1))
         else:
-            # Method B: BeautifulSoup fallback
             soup = BeautifulSoup(res.text, 'html.parser')
             price_el = soup.find(class_="YMlKec fxKbKc")
             if price_el:
                 price = float(re.sub(r'[^\d.]', '', price_el.text))
-            else:
-                # Method C: Generic Rupee symbol search
-                match = re.search(r'₹([\d,]+\.\d{2})', res.text)
-                if match:
-                    price = float(match.group(1).replace(',', ''))
-                    
-    except Exception as e:
-        print(f"Price error for {ticker}: {e}")
+    except: pass
     
-    # --- 2. THEANNEXURE FUNDAMENTALS ---
+    # 2. Fundamentals (TheAnnexure)
     try:
         res = requests.get(annex_url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.content, 'html.parser')
@@ -84,10 +72,8 @@ def fetch_data(comp):
                 label, val = cells[0].get_text(strip=True).lower(), cells[1].get_text(strip=True)
                 if "return on equity" in label: roe = val
                 elif "against 52-week high" in label: drop_52w = val
-    except Exception as e:
-        print(f"Fundamental error for {ticker}: {e}")
+    except: pass
         
-    print(f"Scraped {ticker}: Price=₹{price}")
     return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w}
 
 def calculate_score(row):
@@ -103,16 +89,18 @@ def calculate_score(row):
 
 if __name__ == "__main__":
     companies = get_companies()
-    print(f"Scraping {len(companies)} companies...")
+    print(f"Found {len(companies)} companies. Starting scrape...")
     
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    # Using 30 threads to scrape 5000 companies in ~15 minutes
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
         results = list(executor.map(fetch_data, companies))
         
     df = pd.DataFrame(results)
     df['score'] = df.apply(calculate_score, axis=1)
     
+    # Save to DB
     conn = sqlite3.connect(DB_FILE)
     df.to_sql('daily_snapshot', conn, if_exists='replace', index=False)
     conn.close()
-    print("Database created: market_snapshot.db")
+    print("Database created successfully: market_snapshot.db")
