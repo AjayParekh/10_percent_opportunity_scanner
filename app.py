@@ -48,13 +48,12 @@ if is_weekday and is_market_hours:
 else:
     st.info("🔴 Market is CLOSED. Auto-refresh is paused.")
 
-# --- 3. GITHUB PERSISTENCE LOGIC ---
+# --- 3. GITHUB PERSISTENCE ---
 REPO = "AjayParekh/10_percent_opportunity_scanner"
 TRACKER_FILE = "portfolio_history.db"
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 
 def load_db_from_github():
-    """Downloads the latest tracker DB from GitHub when app starts."""
     if not GITHUB_TOKEN: return
     url = f"https://api.github.com/repos/{REPO}/contents/{TRACKER_FILE}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3.raw"}
@@ -64,7 +63,6 @@ def load_db_from_github():
             f.write(res.content)
 
 def save_db_to_github():
-    """Pushes the updated tracker DB to GitHub."""
     if not GITHUB_TOKEN: 
         st.warning("No GITHUB_TOKEN found. Data will not be saved permanently.")
         return False
@@ -72,7 +70,6 @@ def save_db_to_github():
     url = f"https://api.github.com/repos/{REPO}/contents/{TRACKER_FILE}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     
-    # Get current SHA
     res = requests.get(url, headers=headers)
     sha = res.json().get("sha") if res.status_code == 200 else None
     
@@ -85,7 +82,6 @@ def save_db_to_github():
     put_res = requests.put(url, headers=headers, json=data)
     return put_res.status_code in [200, 201]
 
-# Load DB on startup
 load_db_from_github()
 
 def init_tracker():
@@ -123,7 +119,7 @@ def get_tracker_data():
 # --- 5. APP HEADER ---
 st.markdown('<div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>', unsafe_allow_html=True)
 st.markdown('<div class="omc-title">🏛️ Opportunity Scanner & Tracker</div>', unsafe_allow_html=True)
-st.markdown('<div class="omc-subtitle">Real-time scraped data. Automatically syncs history to GitHub.</div>', unsafe_allow_html=True)
+st.markdown('<div class="omc-subtitle">Scanning Top 2000 companies with Sector-Specific Scoring.</div>', unsafe_allow_html=True)
 
 df = get_snapshot_data()
 tab1, tab2 = st.tabs(["🎯 Live Scanner & 10% Engine", "📈 Performance Tracker"])
@@ -133,17 +129,23 @@ with tab1:
     if df.empty:
         st.error("Database not found. Please run the GitHub Action.")
     else:
-        st.markdown("### 🎯 Top 3 Opportunities Today (Tie-breaker: Lowest P/B)")
-        top_3 = df.head(3)
-        cols = st.columns(3)
+        # --- SIDEBAR SECTOR FILTER ---
+        st.sidebar.markdown("### 🏭 Sector Filter")
+        all_sectors = ["All Sectors"] + sorted(df['sector'].dropna().unique().tolist())
+        selected_sector = st.sidebar.selectbox("Choose Sector", all_sectors)
         
+        filtered_df = df if selected_sector == "All Sectors" else df[df['sector'] == selected_sector]
+
+        st.markdown(f"### 🎯 Top 3 Opportunities ({selected_sector})")
+        top_3 = filtered_df.head(3)
+        
+        cols = st.columns(3)
         for idx, (_, row) in enumerate(top_3.iterrows()):
             target = row['price'] * 1.10
             with cols[idx]:
-                st.metric(label=f"**{row['ticker']}**", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
+                st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
                 st.caption(f"**Score:** {row['score']}/12 | **P/B:** {row['pb']} | **Drop:** {row['drop_52w']}")
                 
-                # Historical Edge Prediction
                 conn = sqlite3.connect(TRACKER_FILE)
                 past_trades = pd.read_sql_query(
                     f"SELECT days_active FROM tracker WHERE status='Achieved' AND json_extract(snapshot_json, '$.score') BETWEEN {row['score']-1} AND {row['score']+1}", conn)
@@ -154,7 +156,6 @@ with tab1:
                 else:
                     st.caption("🔮 *Not enough past data to predict timeframe.*")
                 
-                # SAVE BUTTON
                 if st.button(f"💾 Track {row['ticker']}", key=f"btn_{row['ticker']}"):
                     snapshot = {"score": int(row['score']), "pe": row['pe'], "pb": row['pb'], "roe": row['roe'], "drop_52w": row['drop_52w']}
                     conn = sqlite3.connect(TRACKER_FILE)
@@ -175,8 +176,8 @@ with tab1:
                         conn.close()
 
         st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
-        st.markdown("### 📋 Full Scanned Matrix (Top 100)")
-        st.dataframe(df[['ticker', 'price', 'pe', 'pb', 'roe', 'drop_52w', 'score']].head(100), use_container_width=True, hide_index=True)
+        st.markdown(f"### 📋 Full Scanned Matrix - {selected_sector} (Top 100)")
+        st.dataframe(filtered_df[['ticker', 'sector', 'price', 'pe', 'pb', 'roe', 'drop_52w', 'score']].head(100), use_container_width=True, hide_index=True)
 
 # --- 7. TAB 2: PERFORMANCE TRACKER ---
 with tab2:
@@ -211,7 +212,6 @@ with tab2:
                 "Return": f"{return_pct:+.2f}%", "Days": days_active, "Status": status
             })
             
-        # If any status was updated to 'Achieved' while viewing, push the update to GitHub
         if status_updated:
             save_db_to_github()
             
