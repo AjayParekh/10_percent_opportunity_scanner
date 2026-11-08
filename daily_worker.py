@@ -24,8 +24,16 @@ def get_companies():
         if table:
             for row in table.find_all('tr')[1:]: 
                 cols = row.find_all('td')
-                if len(cols) > 2:
+                if len(cols) > 4:
                     ticker = cols[1].text.strip()
+                    
+                    # Get Sector (Usually in column index 3 or 4)
+                    sector = "Unknown"
+                    for i in range(3, 6):
+                        if len(cols) > i and len(cols[i].text.strip()) > 2:
+                            sector = cols[i].text.strip()
+                            break
+                    
                     mc_text = cols[2].text.strip().replace('₹', '').replace('Cr', '').replace(',', '').strip()
                     try:
                         mc_val = float(mc_text)
@@ -35,11 +43,11 @@ def get_companies():
                     link = cols[0].find('a')
                     if link and 'company/' in link.get('href', ''):
                         bse_code = link['href'].split('/')[-1].replace('.html', '')
-                        companies.append({"ticker": ticker, "bse": bse_code, "market_cap": mc_val})
+                        companies.append({"ticker": ticker, "bse": bse_code, "market_cap": mc_val, "sector": sector})
         
-        # Sort by Market Cap descending and take Top 500
+        # Sort by Market Cap and take Top 2000
         companies = sorted(companies, key=lambda x: x['market_cap'], reverse=True)
-        return companies[:500] 
+        return companies[:2000] 
     except Exception as e:
         print(f"Error fetching list: {e}")
         return []
@@ -47,23 +55,22 @@ def get_companies():
 def fetch_data(comp):
     ticker = comp['ticker']
     bse = comp['bse']
+    sector = comp['sector']
     annex_url = f"https://theannexure.com/company/{bse}.html"
     
     price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
     
-    # --- 1. FETCH PRICE (yfinance) ---
+    # 1. Fetch Price (yfinance)
     try:
-        # NSE tickers require a .NS suffix
         ticker_yf = f"{ticker}.NS"
         stock = yf.Ticker(ticker_yf)
-        # Fetch 1 day of data to get the latest close price
         hist = stock.history(period="1d")
         if not hist.empty:
             price = hist['Close'].iloc[-1]
-    except Exception as e:
-        print(f"yfinance error for {ticker}: {e}")
+    except Exception:
+        pass
     
-    # --- 2. FETCH FUNDAMENTALS (TheAnnexure) ---
+    # 2. Fetch Fundamentals (TheAnnexure)
     try:
         res = requests.get(annex_url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.content, 'html.parser')
@@ -79,36 +86,68 @@ def fetch_data(comp):
                 label, val = cells[0].get_text(strip=True).lower(), cells[1].get_text(strip=True)
                 if "return on equity" in label: roe = val
                 elif "against 52-week high" in label: drop_52w = val
-    except Exception as e:
-        print(f"Annexure error for {ticker}: {e}")
+    except Exception:
+        pass
         
-    print(f"Scraped {ticker}: Price=₹{price}")
-    return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w}
+    return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w, "sector": sector}
 
 def calculate_score(row):
     score = 0
+    sector = str(row['sector']).lower()
+    
     try:
-        if 0 < float(row['pb']) < 1.0: score += 4
-        elif 1.0 <= float(row['pb']) < 1.5: score += 2
-        if 0 < float(row['pe']) < 20: score += 2
-        if float(row['drop_52w'].replace('%', '')) < -15: score += 3
-        if float(row['roe'].replace('%', '')) > 15: score += 3
-    except: pass
-    return score
+        pb = float(row['pb'])
+        pe = float(row['pe'])
+        roe = float(row['roe'].replace('%', ''))
+        drop = float(row['drop_52w'].replace('%', ''))
+    except:
+        return 0 # If missing data, score is 0
+
+    # --- SECTOR-SPECIFIC LOGIC ---
+    if any(x in sector for x in ['bank', 'financial', 'nbfc', 'insurance']):
+        # Financials: Debt is normal. Focus on P/B and ROE.
+        if 0 < pb < 1.0: score += 4
+        elif 1.0 <= pb < 1.5: score += 2
+        if 0 < pe < 15: score += 2
+        if roe > 15: score += 3
+        if drop < -15: score += 3
+        
+    elif any(x in sector for x in ['metal', 'energy', 'oil', 'gas', 'mining', 'cement']):
+        # Cyclicals: Focus on deep drops and asset value (P/B).
+        if 0 < pb < 1.0: score += 5  # Higher weight for cyclicals
+        elif 1.0 <= pb < 1.5: score += 3
+        if 0 < pe < 12: score += 2
+        if drop < -20: score += 3 # Deep cyclical drop
+        if roe > 10: score += 2
+        
+    elif any(x in sector for x in ['it', 'software', 'fmcg', 'consumer', 'pharma', 'health']):
+        # Defensives: A 10% drop is a big deal. Debt is bad.
+        if 0 < pe < 30: score += 2
+        if roe > 20: score += 4
+        if drop < -10: score += 4
+        # We don't have Debt/Equity in this query, but ROE covers quality
+        
+    else:
+        # General / Default
+        if 0 < pb < 1.0: score += 4
+        elif 1.0 <= pb < 1.5: score += 2
+        if 0 < pe < 20: score += 2
+        if drop < -15: score += 3
+        if roe > 15: score += 3
+        
+    return min(score, 12) # Cap at 12
 
 if __name__ == "__main__":
     companies = get_companies()
     print(f"Found Top {len(companies)} companies. Starting scrape...")
     
     results = []
-    # Using 10 workers for yfinance, it's very fast and reliable
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         results = list(executor.map(fetch_data, companies))
         
     df = pd.DataFrame(results)
     df['score'] = df.apply(calculate_score, axis=1)
     
-    # Save to DB
     conn = sqlite3.connect(DB_FILE)
     df.to_sql('daily_snapshot', conn, if_exists='replace', index=False)
     conn.close()
