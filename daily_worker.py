@@ -27,7 +27,7 @@ def get_companies():
                 if len(cols) > 4:
                     ticker = cols[1].text.strip()
                     
-                    # Get Sector (Usually in column index 3 or 4)
+                    # Extract Sector (Checking columns 3, 4, 5 to find it)
                     sector = "Unknown"
                     for i in range(3, 6):
                         if len(cols) > i and len(cols[i].text.strip()) > 2:
@@ -45,7 +45,7 @@ def get_companies():
                         bse_code = link['href'].split('/')[-1].replace('.html', '')
                         companies.append({"ticker": ticker, "bse": bse_code, "market_cap": mc_val, "sector": sector})
         
-        # Sort by Market Cap and take Top 2000
+        # Sort by Market Cap descending and take Top 2000
         companies = sorted(companies, key=lambda x: x['market_cap'], reverse=True)
         return companies[:2000] 
     except Exception as e:
@@ -105,7 +105,7 @@ def calculate_score(row):
 
     # --- SECTOR-SPECIFIC LOGIC ---
     if any(x in sector for x in ['bank', 'financial', 'nbfc', 'insurance']):
-        # Financials: Debt is normal. Focus on P/B and ROE.
+        # Financials: Debt is fuel. Focus on P/B and ROE.
         if 0 < pb < 1.0: score += 4
         elif 1.0 <= pb < 1.5: score += 2
         if 0 < pe < 15: score += 2
@@ -114,18 +114,17 @@ def calculate_score(row):
         
     elif any(x in sector for x in ['metal', 'energy', 'oil', 'gas', 'mining', 'cement']):
         # Cyclicals: Focus on deep drops and asset value (P/B).
-        if 0 < pb < 1.0: score += 5  # Higher weight for cyclicals
+        if 0 < pb < 1.0: score += 5  
         elif 1.0 <= pb < 1.5: score += 3
         if 0 < pe < 12: score += 2
-        if drop < -20: score += 3 # Deep cyclical drop
+        if drop < -20: score += 3 
         if roe > 10: score += 2
         
     elif any(x in sector for x in ['it', 'software', 'fmcg', 'consumer', 'pharma', 'health']):
-        # Defensives: A 10% drop is a big deal. Debt is bad.
+        # Defensives: A 10% drop is a big deal. Quality matters.
         if 0 < pe < 30: score += 2
-        if roe > 20: score += 4
-        if drop < -10: score += 4
-        # We don't have Debt/Equity in this query, but ROE covers quality
+        if roe > 20: score += 5
+        if drop < -10: score += 5
         
     else:
         # General / Default
