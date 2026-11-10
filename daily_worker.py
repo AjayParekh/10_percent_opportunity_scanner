@@ -27,7 +27,6 @@ def get_companies():
                 if len(cols) > 4:
                     ticker = cols[1].text.strip()
                     
-                    # Extract Sector (Checking columns 3, 4, 5 to find it)
                     sector = "Unknown"
                     for i in range(3, 6):
                         if len(cols) > i and len(cols[i].text.strip()) > 2:
@@ -45,7 +44,6 @@ def get_companies():
                         bse_code = link['href'].split('/')[-1].replace('.html', '')
                         companies.append({"ticker": ticker, "bse": bse_code, "market_cap": mc_val, "sector": sector})
         
-        # Sort by Market Cap descending and take Top 2000
         companies = sorted(companies, key=lambda x: x['market_cap'], reverse=True)
         return companies[:2000] 
     except Exception as e:
@@ -58,7 +56,7 @@ def fetch_data(comp):
     sector = comp['sector']
     annex_url = f"https://theannexure.com/company/{bse}.html"
     
-    price, pe, pb, roe, drop_52w = 0.0, "N/A", "N/A", "N/A", "N/A"
+    price, pe, pb, book_value, roe, drop_52w = 0.0, "N/A", "N/A", 0.0, "N/A", "N/A"
     
     # 1. Fetch Price (yfinance)
     try:
@@ -80,6 +78,20 @@ def fetch_data(comp):
         if pe_pb:
             pe, pb = pe_pb.group(1), pe_pb.group(2)
             
+        # Robust Book Value extraction
+        bv_match = re.search(r"BV\s*₹\s*([\d,\.]+)", text)
+        if bv_match:
+            book_value = float(bv_match.group(1).replace(',', ''))
+        else:
+            # Fallback search if top metric is missing
+            for row in soup.find_all('tr'):
+                cells = row.find_all(['th', 'td'])
+                if len(cells) >= 2:
+                    if "book value" in cells[0].get_text(strip=True).lower():
+                        bv_clean = re.sub(r'[^\d.]', '', cells[1].get_text(strip=True))
+                        if bv_clean:
+                            book_value = float(bv_clean)
+            
         for row in soup.find_all('tr'):
             cells = row.find_all(['th', 'td'])
             if len(cells) >= 2:
@@ -89,7 +101,7 @@ def fetch_data(comp):
     except Exception:
         pass
         
-    return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "roe": roe, "drop_52w": drop_52w, "sector": sector}
+    return {"ticker": ticker, "price": price, "pe": pe, "pb": pb, "book_value": book_value, "roe": roe, "drop_52w": drop_52w, "sector": sector}
 
 def calculate_score(row):
     score = 0
@@ -100,12 +112,13 @@ def calculate_score(row):
         pe = float(row['pe'])
         roe = float(row['roe'].replace('%', ''))
         drop = float(row['drop_52w'].replace('%', ''))
+        price = float(row['price'])
+        bv = float(row['book_value'])
     except:
-        return 0 # If missing data, score is 0
+        return 0 
 
     # --- SECTOR-SPECIFIC LOGIC ---
     if any(x in sector for x in ['bank', 'financial', 'nbfc', 'insurance']):
-        # Financials: Debt is fuel. Focus on P/B and ROE.
         if 0 < pb < 1.0: score += 4
         elif 1.0 <= pb < 1.5: score += 2
         if 0 < pe < 15: score += 2
@@ -113,7 +126,6 @@ def calculate_score(row):
         if drop < -15: score += 3
         
     elif any(x in sector for x in ['metal', 'energy', 'oil', 'gas', 'mining', 'cement']):
-        # Cyclicals: Focus on deep drops and asset value (P/B).
         if 0 < pb < 1.0: score += 5  
         elif 1.0 <= pb < 1.5: score += 3
         if 0 < pe < 12: score += 2
@@ -121,20 +133,23 @@ def calculate_score(row):
         if roe > 10: score += 2
         
     elif any(x in sector for x in ['it', 'software', 'fmcg', 'consumer', 'pharma', 'health']):
-        # Defensives: A 10% drop is a big deal. Quality matters.
         if 0 < pe < 30: score += 2
         if roe > 20: score += 5
         if drop < -10: score += 5
         
     else:
-        # General / Default
         if 0 < pb < 1.0: score += 4
         elif 1.0 <= pb < 1.5: score += 2
         if 0 < pe < 20: score += 2
         if drop < -15: score += 3
         if roe > 15: score += 3
+
+    # --- BOOK VALUE BONUS ---
+    # If the stock is trading BELOW its actual book value
+    if bv > 0 and price > 0 and price < bv:
+        score += 2 
         
-    return min(score, 12) # Cap at 12
+    return min(score, 15) # Increased cap to accommodate Book Value rule
 
 if __name__ == "__main__":
     companies = get_companies()
@@ -146,6 +161,9 @@ if __name__ == "__main__":
         
     df = pd.DataFrame(results)
     df['score'] = df.apply(calculate_score, axis=1)
+    
+    # Filter out bad data (where price is 0)
+    df = df[df['price'] > 0]
     
     conn = sqlite3.connect(DB_FILE)
     df.to_sql('daily_snapshot', conn, if_exists='replace', index=False)
