@@ -83,7 +83,6 @@ def fetch_data(comp):
         if bv_match:
             book_value = float(bv_match.group(1).replace(',', ''))
         else:
-            # Fallback search if top metric is missing
             for row in soup.find_all('tr'):
                 cells = row.find_all(['th', 'td'])
                 if len(cells) >= 2:
@@ -117,6 +116,11 @@ def calculate_score(row):
     except:
         return 0 
 
+    # --- NEW: CONSISTENCY CHECK CALCULATION ---
+    implied_roe = 0.0
+    if pb > 0 and pe > 0:
+        implied_roe = (pb / pe) * 100
+
     # --- SECTOR-SPECIFIC LOGIC ---
     if any(x in sector for x in ['bank', 'financial', 'nbfc', 'insurance']):
         if 0 < pb < 1.0: score += 4
@@ -145,11 +149,15 @@ def calculate_score(row):
         if roe > 15: score += 3
 
     # --- BOOK VALUE BONUS ---
-    # If the stock is trading BELOW its actual book value
     if bv > 0 and price > 0 and price < bv:
         score += 2 
         
-    return min(score, 15) # Increased cap to accommodate Book Value rule
+    # --- NEW: CONSISTENCY CHECK BONUS ---
+    # If implied ROE is high, AND published ROE is high (they confirm each other)
+    if implied_roe > 15.0 and roe > 15.0:
+        score += 3
+        
+    return min(score, 18) # Max score increased to 18
 
 if __name__ == "__main__":
     companies = get_companies()
