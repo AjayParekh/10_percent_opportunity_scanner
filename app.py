@@ -8,6 +8,7 @@ import pytz
 from streamlit_autorefresh import st_autorefresh
 import requests
 import base64
+import time
 
 # --- 1. AUTO REFRESH LOGIC ---
 ist = pytz.timezone('Asia/Kolkata')
@@ -144,7 +145,6 @@ with tab1:
             with cols[idx]:
                 st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
                 
-                # Show Book Value
                 bv_display = row.get('book_value', 0.0)
                 st.caption(f"**Score:** {row['score']}/15 | **P/B:** {row['pb']} | **BV:** ₹{bv_display:.2f} | **Drop:** {row['drop_52w']}")
                 
@@ -184,9 +184,7 @@ with tab1:
         st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
         st.markdown(f"### 📋 Full Scanned Matrix - {selected_sector} (Top 100)")
         
-        # Dynamically check which columns exist to prevent crashes
         display_cols = [col for col in ['ticker', 'sector', 'price', 'pe', 'pb', 'book_value', 'roe', 'drop_52w', 'score'] if col in filtered_df.columns]
-        
         st.dataframe(filtered_df[display_cols].head(100), use_container_width=True, hide_index=True)
 
 # --- 7. TAB 2: PERFORMANCE TRACKER ---
@@ -247,6 +245,28 @@ with tab2:
             save_db_to_github()
             
         st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+        
+    # --- NEW: DANGER ZONE TO CLEAR TRACKER ---
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("### ⚠️ Danger Zone")
+    st.markdown("If you want to start fresh and remove all test data, you can completely wipe your tracker history below. This will delete it from GitHub as well.")
+    
+    confirm_delete = st.checkbox("I understand this will permanently delete all historical tracking data.")
+    
+    if st.button("🗑️ Clear All Tracker History", disabled=not confirm_delete, type="primary"):
+        conn = sqlite3.connect(TRACKER_FILE)
+        conn.execute("DELETE FROM tracker")
+        conn.commit()
+        conn.close()
+        
+        with st.spinner("Erasing history from GitHub..."):
+            if save_db_to_github():
+                st.success("All tracker history cleared successfully! Reloading app...")
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error("Failed to update GitHub. Please check your GITHUB_TOKEN.")
 
 # --- 8. MANUAL REFRESH ---
 st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
