@@ -112,7 +112,7 @@ def get_snapshot_data():
 
 def get_tracker_data():
     conn = sqlite3.connect(TRACKER_FILE)
-    df = pd.read_sql_query("SELECT * FROM tracker", conn)
+    df = pd.read_sql_query("SELECT * FROM tracker ORDER BY date_logged DESC", conn)
     conn.close()
     return df
 
@@ -129,7 +129,6 @@ with tab1:
     if df.empty:
         st.error("Database not found. Please run the GitHub Action.")
     else:
-        # --- SIDEBAR SECTOR FILTER ---
         st.sidebar.markdown("### 🏭 Sector Filter")
         all_sectors = ["All Sectors"] + sorted(df['sector'].dropna().unique().tolist())
         selected_sector = st.sidebar.selectbox("Choose Sector", all_sectors)
@@ -144,11 +143,13 @@ with tab1:
             target = row['price'] * 1.10
             with cols[idx]:
                 st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
-                st.caption(f"**Score:** {row['score']}/12 | **P/B:** {row['pb']} | **Drop:** {row['drop_52w']}")
+                
+                # Show Book Value in the UI
+                st.caption(f"**Score:** {row['score']}/15 | **P/B:** {row['pb']} | **BV:** ₹{row['book_value']:.2f} | **Drop:** {row['drop_52w']}")
                 
                 conn = sqlite3.connect(TRACKER_FILE)
                 past_trades = pd.read_sql_query(
-                    f"SELECT days_active FROM tracker WHERE status='Achieved' AND json_extract(snapshot_json, '$.score') BETWEEN {row['score']-1} AND {row['score']+1}", conn)
+                    f"SELECT days_active FROM tracker WHERE status='Achieved' AND json_extract(snapshot_json, '$.score') BETWEEN {row['score']-2} AND {row['score']+2}", conn)
                 conn.close()
                 
                 if not past_trades.empty:
@@ -157,10 +158,14 @@ with tab1:
                     st.caption("🔮 *Not enough past data to predict timeframe.*")
                 
                 if st.button(f"💾 Track {row['ticker']}", key=f"btn_{row['ticker']}"):
-                    snapshot = {"score": int(row['score']), "pe": row['pe'], "pb": row['pb'], "roe": row['roe'], "drop_52w": row['drop_52w']}
+                    snapshot = {
+                        "score": int(row['score']), "pe": row['pe'], "pb": row['pb'], 
+                        "book_value": row['book_value'], "roe": row['roe'], "drop_52w": row['drop_52w']
+                    }
                     conn = sqlite3.connect(TRACKER_FILE)
                     c = conn.cursor()
-                    c.execute("SELECT id FROM tracker WHERE ticker=? AND date_logged=date('now')", (row['ticker'],))
+                    # FIXED: Prevents tracking if it is already pending
+                    c.execute("SELECT id FROM tracker WHERE ticker=? AND status='Pending'", (row['ticker'],))
                     if not c.fetchone():
                         c.execute("INSERT INTO tracker (date_logged, ticker, entry_price, target_price, status, snapshot_json) VALUES (date('now'), ?, ?, ?, 'Pending', ?)", 
                                   (row['ticker'], row['price'], target, json.dumps(snapshot)))
@@ -172,16 +177,21 @@ with tab1:
                             else:
                                 st.error("Failed to save to GitHub. Check your token.")
                     else:
-                        st.warning(f"{row['ticker']} already saved today.")
+                        st.warning(f"You are already tracking {row['ticker']} (Pending).")
                         conn.close()
 
         st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
         st.markdown(f"### 📋 Full Scanned Matrix - {selected_sector} (Top 100)")
-        st.dataframe(filtered_df[['ticker', 'sector', 'price', 'pe', 'pb', 'roe', 'drop_52w', 'score']].head(100), use_container_width=True, hide_index=True)
+        
+        # Added Book Value to display
+        display_cols = ['ticker', 'sector', 'price', 'pe', 'pb', 'book_value', 'roe', 'drop_52w', 'score']
+        st.dataframe(filtered_df[display_cols].head(100), use_container_width=True, hide_index=True)
 
 # --- 7. TAB 2: PERFORMANCE TRACKER ---
 with tab2:
     st.markdown("### 📈 Historical Performance")
+    st.markdown("This table shows every stock you've ever tracked, including its exact metrics on the day you tracked it.")
+    
     tracker_df = get_tracker_data()
     
     if tracker_df.empty:
@@ -193,7 +203,7 @@ with tab2:
             current_price = current_row['price'].values[0] if not current_row.empty else row['entry_price']
             
             days_active = (datetime.now() - datetime.strptime(row['date_logged'], "%Y-%m-%d")).days
-            return_pct = ((current_price - row['entry_price']) / row['entry_price']) * 100
+            return_pct = ((current_price - row['entry_price']) / row['entry_price']) * 100 if row['entry_price'] > 0 else 0
             
             status_updated = False
             if current_price >= row['target_price'] and row['status'] == 'Pending':
@@ -206,10 +216,27 @@ with tab2:
             else:
                 status = "⏳ In Progress" if row['status'] == 'Pending' else row['status']
                 
+            # Parse the snapshot JSON to show historical metrics
+            try:
+                snap = json.loads(row['snapshot_json'])
+                entry_score = snap.get('score', 'N/A')
+                entry_pb = snap.get('pb', 'N/A')
+                entry_roe = snap.get('roe', 'N/A')
+            except:
+                entry_score, entry_pb, entry_roe = 'N/A', 'N/A', 'N/A'
+                
             display_rows.append({
-                "Date": row['date_logged'], "Ticker": row['ticker'], "Entry": f"₹{row['entry_price']:.2f}",
-                "Target": f"₹{row['target_price']:.2f}", "Current": f"₹{current_price:.2f}",
-                "Return": f"{return_pct:+.2f}%", "Days": days_active, "Status": status
+                "Date Logged": row['date_logged'], 
+                "Ticker": row['ticker'], 
+                "Entry": f"₹{row['entry_price']:.2f}",
+                "Target": f"₹{row['target_price']:.2f}", 
+                "Current": f"₹{current_price:.2f}",
+                "Return": f"{return_pct:+.2f}%", 
+                "Days": days_active, 
+                "Status": status,
+                "Entry Score": entry_score,
+                "Entry P/B": entry_pb,
+                "Entry ROE": entry_roe
             })
             
         if status_updated:
