@@ -144,7 +144,7 @@ with tab1:
             with cols[idx]:
                 st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
                 
-                # Safe fallback for book_value in case database hasn't updated yet
+                # Show Book Value
                 bv_display = row.get('book_value', 0.0)
                 st.caption(f"**Score:** {row['score']}/15 | **P/B:** {row['pb']} | **BV:** ₹{bv_display:.2f} | **Drop:** {row['drop_52w']}")
                 
@@ -165,7 +165,7 @@ with tab1:
                     }
                     conn = sqlite3.connect(TRACKER_FILE)
                     c = conn.cursor()
-                    # Prevents tracking if it is already pending
+                    # Strict duplicate check for Pending stocks
                     c.execute("SELECT id FROM tracker WHERE ticker=? AND status='Pending'", (row['ticker'],))
                     if not c.fetchone():
                         c.execute("INSERT INTO tracker (date_logged, ticker, entry_price, target_price, status, snapshot_json) VALUES (date('now'), ?, ?, ?, 'Pending', ?)", 
@@ -185,7 +185,6 @@ with tab1:
         st.markdown(f"### 📋 Full Scanned Matrix - {selected_sector} (Top 100)")
         
         # Dynamically check which columns exist to prevent crashes
-        base_cols = ['ticker', 'sector', 'price', 'pe', 'pb', 'roe', 'drop_52w', 'score']
         display_cols = [col for col in ['ticker', 'sector', 'price', 'pe', 'pb', 'book_value', 'roe', 'drop_52w', 'score'] if col in filtered_df.columns]
         
         st.dataframe(filtered_df[display_cols].head(100), use_container_width=True, hide_index=True)
@@ -224,9 +223,10 @@ with tab2:
                 snap = json.loads(row['snapshot_json'])
                 entry_score = snap.get('score', 'N/A')
                 entry_pb = snap.get('pb', 'N/A')
+                entry_bv = snap.get('book_value', 'N/A')
                 entry_roe = snap.get('roe', 'N/A')
             except:
-                entry_score, entry_pb, entry_roe = 'N/A', 'N/A', 'N/A'
+                entry_score, entry_pb, entry_bv, entry_roe = 'N/A', 'N/A', 'N/A', 'N/A'
                 
             display_rows.append({
                 "Date Logged": row['date_logged'], 
@@ -239,6 +239,7 @@ with tab2:
                 "Status": status,
                 "Entry Score": entry_score,
                 "Entry P/B": entry_pb,
+                "Entry BV": entry_bv,
                 "Entry ROE": entry_roe
             })
             
