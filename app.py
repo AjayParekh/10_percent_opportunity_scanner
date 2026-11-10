@@ -144,8 +144,9 @@ with tab1:
             with cols[idx]:
                 st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
                 
-                # Show Book Value in the UI
-                st.caption(f"**Score:** {row['score']}/15 | **P/B:** {row['pb']} | **BV:** ₹{row['book_value']:.2f} | **Drop:** {row['drop_52w']}")
+                # Safe fallback for book_value in case database hasn't updated yet
+                bv_display = row.get('book_value', 0.0)
+                st.caption(f"**Score:** {row['score']}/15 | **P/B:** {row['pb']} | **BV:** ₹{bv_display:.2f} | **Drop:** {row['drop_52w']}")
                 
                 conn = sqlite3.connect(TRACKER_FILE)
                 past_trades = pd.read_sql_query(
@@ -160,11 +161,11 @@ with tab1:
                 if st.button(f"💾 Track {row['ticker']}", key=f"btn_{row['ticker']}"):
                     snapshot = {
                         "score": int(row['score']), "pe": row['pe'], "pb": row['pb'], 
-                        "book_value": row['book_value'], "roe": row['roe'], "drop_52w": row['drop_52w']
+                        "book_value": bv_display, "roe": row['roe'], "drop_52w": row['drop_52w']
                     }
                     conn = sqlite3.connect(TRACKER_FILE)
                     c = conn.cursor()
-                    # FIXED: Prevents tracking if it is already pending
+                    # Prevents tracking if it is already pending
                     c.execute("SELECT id FROM tracker WHERE ticker=? AND status='Pending'", (row['ticker'],))
                     if not c.fetchone():
                         c.execute("INSERT INTO tracker (date_logged, ticker, entry_price, target_price, status, snapshot_json) VALUES (date('now'), ?, ?, ?, 'Pending', ?)", 
@@ -183,8 +184,10 @@ with tab1:
         st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
         st.markdown(f"### 📋 Full Scanned Matrix - {selected_sector} (Top 100)")
         
-        # Added Book Value to display
-        display_cols = ['ticker', 'sector', 'price', 'pe', 'pb', 'book_value', 'roe', 'drop_52w', 'score']
+        # Dynamically check which columns exist to prevent crashes
+        base_cols = ['ticker', 'sector', 'price', 'pe', 'pb', 'roe', 'drop_52w', 'score']
+        display_cols = [col for col in ['ticker', 'sector', 'price', 'pe', 'pb', 'book_value', 'roe', 'drop_52w', 'score'] if col in filtered_df.columns]
+        
         st.dataframe(filtered_df[display_cols].head(100), use_container_width=True, hide_index=True)
 
 # --- 7. TAB 2: PERFORMANCE TRACKER ---
