@@ -120,7 +120,7 @@ def get_tracker_data():
 # --- 5. APP HEADER ---
 st.markdown('<div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>', unsafe_allow_html=True)
 st.markdown('<div class="omc-title">🏛️ Opportunity Scanner & Tracker</div>', unsafe_allow_html=True)
-st.markdown('<div class="omc-subtitle">Scanning Top 2000 companies with Sector-Specific Scoring.</div>', unsafe_allow_html=True)
+st.markdown('<div class="omc-subtitle">Scanning Top 2000 companies with Sector-Specific Scoring & Consistency Checks.</div>', unsafe_allow_html=True)
 
 df = get_snapshot_data()
 tab1, tab2 = st.tabs(["🎯 Live Scanner & 10% Engine", "📈 Performance Tracker"])
@@ -146,7 +146,8 @@ with tab1:
                 st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
                 
                 bv_display = row.get('book_value', 0.0)
-                st.caption(f"**Score:** {row['score']}/15 | **P/B:** {row['pb']} | **BV:** ₹{bv_display:.2f} | **Drop:** {row['drop_52w']}")
+                # Updated to show /18 Max Score
+                st.caption(f"**Score:** {row['score']}/18 | **P/B:** {row['pb']} | **BV:** ₹{bv_display:.2f} | **Drop:** {row['drop_52w']}")
                 
                 conn = sqlite3.connect(TRACKER_FILE)
                 past_trades = pd.read_sql_query(
@@ -246,7 +247,7 @@ with tab2:
             
         st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
         
-    # --- NEW: DANGER ZONE TO CLEAR TRACKER ---
+    # --- DANGER ZONE TO CLEAR TRACKER ---
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("### ⚠️ Danger Zone")
