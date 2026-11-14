@@ -45,7 +45,8 @@ def get_companies():
                         companies.append({"ticker": ticker, "bse": bse_code, "market_cap": mc_val, "sector": sector})
         
         companies = sorted(companies, key=lambda x: x['market_cap'], reverse=True)
-        return companies[:2000] 
+        # UPDATED TO 5000 COMPANIES
+        return companies[:5000] 
     except Exception as e:
         print(f"Error fetching list: {e}")
         return []
@@ -78,7 +79,6 @@ def fetch_data(comp):
         if pe_pb:
             pe, pb = pe_pb.group(1), pe_pb.group(2)
             
-        # Robust Book Value extraction
         bv_match = re.search(r"BV\s*₹\s*([\d,\.]+)", text)
         if bv_match:
             book_value = float(bv_match.group(1).replace(',', ''))
@@ -116,12 +116,10 @@ def calculate_score(row):
     except:
         return 0 
 
-    # --- NEW: CONSISTENCY CHECK CALCULATION ---
     implied_roe = 0.0
     if pb > 0 and pe > 0:
         implied_roe = (pb / pe) * 100
 
-    # --- SECTOR-SPECIFIC LOGIC ---
     if any(x in sector for x in ['bank', 'financial', 'nbfc', 'insurance']):
         if 0 < pb < 1.0: score += 4
         elif 1.0 <= pb < 1.5: score += 2
@@ -148,29 +146,26 @@ def calculate_score(row):
         if drop < -15: score += 3
         if roe > 15: score += 3
 
-    # --- BOOK VALUE BONUS ---
     if bv > 0 and price > 0 and price < bv:
         score += 2 
         
-    # --- NEW: CONSISTENCY CHECK BONUS ---
-    # If implied ROE is high, AND published ROE is high (they confirm each other)
     if implied_roe > 15.0 and roe > 15.0:
         score += 3
         
-    return min(score, 18) # Max score increased to 18
+    return min(score, 18)
 
 if __name__ == "__main__":
     companies = get_companies()
     print(f"Found Top {len(companies)} companies. Starting scrape...")
     
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+    # Increased workers slightly to handle 5000 companies faster
+    with concurrent.futures.ThreadPoolExecutor(max_workers=25) as executor:
         results = list(executor.map(fetch_data, companies))
         
     df = pd.DataFrame(results)
     df['score'] = df.apply(calculate_score, axis=1)
     
-    # Filter out bad data (where price is 0)
     df = df[df['price'] > 0]
     
     conn = sqlite3.connect(DB_FILE)
