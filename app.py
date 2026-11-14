@@ -9,17 +9,20 @@ from streamlit_autorefresh import st_autorefresh
 import requests
 import base64
 import time
+import yfinance as yf
 
-# --- 1. AUTO REFRESH LOGIC ---
+# --- 1. AUTO REFRESH LOGIC (9 AM to 4 PM) ---
 ist = pytz.timezone('Asia/Kolkata')
 now_ist = datetime.now(ist)
 is_weekday = now_ist.weekday() < 5 
-market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+
+# Updated to exactly 9:00 AM to 4:00 PM as requested
+market_open = now_ist.replace(hour=9, minute=0, second=0, microsecond=0)
+market_close = now_ist.replace(hour=16, minute=0, second=0, microsecond=0)
 is_market_hours = market_open <= now_ist <= market_close
 
 if is_weekday and is_market_hours:
-    st_autorefresh(interval=3600000, key="market_hours_refresh")
+    st_autorefresh(interval=3600000, key="market_hours_refresh") # Refreshes every 1 hour
 
 # --- 2. PAGE SETUP & UI ---
 st.set_page_config(page_title="Opportunity Scanner", layout="wide", page_icon="🏛️")
@@ -45,9 +48,9 @@ st.markdown(
 )
 
 if is_weekday and is_market_hours:
-    st.success("🟢 Market is OPEN. App will auto-refresh every 1 hour.")
+    st.success("🟢 Market is OPEN. Filtered companies will auto-refresh live prices every 1 hour.")
 else:
-    st.info("🔴 Market is CLOSED. Auto-refresh is paused.")
+    st.info("🔴 Market is CLOSED. Displaying pre-market static data.")
 
 # --- 3. GITHUB PERSISTENCE ---
 REPO = "AjayParekh/10_percent_opportunity_scanner"
@@ -117,10 +120,36 @@ def get_tracker_data():
     conn.close()
     return df
 
+# --- LIGHTWEIGHT BATCH PRICE FETCHER ---
+# This only fetches live prices for the specific stocks currently on screen (Top 3 + Top 100)
+@st.cache_data(ttl=300) 
+def get_bulk_live_prices(tickers):
+    if not tickers: return {}
+    tickers_yf = [f"{t}.NS" for t in tickers]
+    try:
+        data = yf.download(tickers_yf, period="1d", progress=False)
+        if 'Close' in data:
+            close_prices = data['Close'].iloc[-1]
+            return {t: float(close_prices[f"{t}.NS"]) for t in tickers if f"{t}.NS" in close_prices and pd.notna(close_prices[f"{t}.NS"])}
+    except Exception:
+        pass
+    return {}
+
+@st.cache_data(ttl=300) 
+def get_live_price(ticker):
+    try:
+        stock = yf.Ticker(f"{ticker}.NS")
+        hist = stock.history(period="1d")
+        if not hist.empty:
+            return float(hist['Close'].iloc[-1])
+    except Exception:
+        pass
+    return None
+
 # --- 5. APP HEADER ---
 st.markdown('<div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>', unsafe_allow_html=True)
 st.markdown('<div class="omc-title">🏛️ Opportunity Scanner & Tracker</div>', unsafe_allow_html=True)
-st.markdown('<div class="omc-subtitle">Scanning Top 2000 companies with Sector-Specific Scoring & Consistency Checks.</div>', unsafe_allow_html=True)
+st.markdown('<div class="omc-subtitle">Scanning Top 5000 companies with Sector-Specific Scoring & Consistency Checks.</div>', unsafe_allow_html=True)
 
 df = get_snapshot_data()
 tab1, tab2 = st.tabs(["🎯 Live Scanner & 10% Engine", "📈 Performance Tracker"])
@@ -136,17 +165,27 @@ with tab1:
         
         filtered_df = df if selected_sector == "All Sectors" else df[df['sector'] == selected_sector]
 
+        # Fetch live prices in bulk for the Top 100 matrix (this avoids multiple API calls)
+        top_100_tickers = filtered_df.head(100)['ticker'].tolist()
+        live_prices = get_bulk_live_prices(top_100_tickers)
+
+        # Update the dataframe with live prices for the display
+        filtered_df = filtered_df.copy()
+        filtered_df['price'] = filtered_df.apply(lambda r: live_prices.get(r['ticker'], r['price']), axis=1)
+        filtered_df['target'] = filtered_df['price'] * 1.10
+
         st.markdown(f"### 🎯 Top 3 Opportunities ({selected_sector})")
         top_3 = filtered_df.head(3)
         
         cols = st.columns(3)
         for idx, (_, row) in enumerate(top_3.iterrows()):
-            target = row['price'] * 1.10
+            current_price = row['price']
+            target = row['target']
+            
             with cols[idx]:
-                st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{row['price']:.2f}", delta=f"Target: ₹{target:.2f}")
+                st.metric(label=f"**{row['ticker']}** ({row['sector']})", value=f"₹{current_price:.2f}", delta=f"Target: ₹{target:.2f}")
                 
                 bv_display = row.get('book_value', 0.0)
-                # Updated to show /18 Max Score
                 st.caption(f"**Score:** {row['score']}/18 | **P/B:** {row['pb']} | **BV:** ₹{bv_display:.2f} | **Drop:** {row['drop_52w']}")
                 
                 conn = sqlite3.connect(TRACKER_FILE)
@@ -166,11 +205,10 @@ with tab1:
                     }
                     conn = sqlite3.connect(TRACKER_FILE)
                     c = conn.cursor()
-                    # Strict duplicate check for Pending stocks
                     c.execute("SELECT id FROM tracker WHERE ticker=? AND status='Pending'", (row['ticker'],))
                     if not c.fetchone():
                         c.execute("INSERT INTO tracker (date_logged, ticker, entry_price, target_price, status, snapshot_json) VALUES (date('now'), ?, ?, ?, 'Pending', ?)", 
-                                  (row['ticker'], row['price'], target, json.dumps(snapshot)))
+                                  (row['ticker'], current_price, target, json.dumps(snapshot)))
                         conn.commit()
                         conn.close()
                         with st.spinner("Saving permanently to GitHub..."):
@@ -185,6 +223,7 @@ with tab1:
         st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
         st.markdown(f"### 📋 Full Scanned Matrix - {selected_sector} (Top 100)")
         
+        # Show updated live prices in the matrix
         display_cols = [col for col in ['ticker', 'sector', 'price', 'pe', 'pb', 'book_value', 'roe', 'drop_52w', 'score'] if col in filtered_df.columns]
         st.dataframe(filtered_df[display_cols].head(100), use_container_width=True, hide_index=True)
 
@@ -200,8 +239,8 @@ with tab2:
     else:
         display_rows = []
         for _, row in tracker_df.iterrows():
-            current_row = df[df['ticker'] == row['ticker']]
-            current_price = current_row['price'].values[0] if not current_row.empty else row['entry_price']
+            live_price = get_live_price(row['ticker'])
+            current_price = live_price if live_price else row['entry_price']
             
             days_active = (datetime.now() - datetime.strptime(row['date_logged'], "%Y-%m-%d")).days
             return_pct = ((current_price - row['entry_price']) / row['entry_price']) * 100 if row['entry_price'] > 0 else 0
@@ -217,7 +256,6 @@ with tab2:
             else:
                 status = "⏳ In Progress" if row['status'] == 'Pending' else row['status']
                 
-            # Parse the snapshot JSON to show historical metrics
             try:
                 snap = json.loads(row['snapshot_json'])
                 entry_score = snap.get('score', 'N/A')
@@ -272,4 +310,5 @@ with tab2:
 # --- 8. MANUAL REFRESH ---
 st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
 if st.button("🔄 Force Refresh Now"):
+    st.cache_data.clear()
     st.rerun()
