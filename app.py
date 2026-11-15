@@ -10,9 +10,6 @@ import requests
 import base64
 import time
 import yfinance as yf
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # --- 1. AUTO REFRESH LOGIC (9 AM to 4 PM) ---
 ist = pytz.timezone('Asia/Kolkata')
@@ -24,7 +21,7 @@ market_close = now_ist.replace(hour=16, minute=0, second=0, microsecond=0)
 is_market_hours = market_open <= now_ist <= market_close
 
 if is_weekday and is_market_hours:
-    st_autorefresh(interval=3600000, key="market_hours_refresh")
+    st_autorefresh(interval=3600000, key="market_hours_refresh") # Refreshes every 1 hour
 
 # --- 2. PAGE SETUP & UI ---
 st.set_page_config(page_title="Opportunity Scanner", layout="wide", page_icon="🏛️")
@@ -146,44 +143,6 @@ def get_live_price(ticker):
         pass
     return None
 
-# --- NEW: EMAIL ALERT FUNCTION ---
-def send_email_alert(top_3_df):
-    sender_email = st.secrets.get("EMAIL_SENDER", "")
-    sender_password = st.secrets.get("EMAIL_PASSWORD", "")
-    receiver_email = st.secrets.get("EMAIL_RECEIVER", "")
-
-    if not sender_email or not sender_password or not receiver_email:
-        st.error("Email credentials missing. Please configure EMAIL_SENDER, EMAIL_PASSWORD, and EMAIL_RECEIVER in Streamlit Secrets.")
-        return False
-
-    subject = "🚀 Daily Opportunity Scanner: Top 3 Picks"
-    body = "<h2>🏛️ Top 3 Opportunities (All Sectors)</h2><ul>"
-    
-    for _, row in top_3_df.iterrows():
-        target = row['price'] * 1.10
-        body += f"<li><strong>{row['ticker']}</strong> ({row['sector']})<br>"
-        body += f"Current Price: ₹{row['price']:.2f} | Target (+10%): ₹{target:.2f}<br>"
-        body += f"Score: {row['score']}/18 | P/B: {row['pb']} | BV: ₹{row.get('book_value', 0.0):.2f}</li><br>"
-    
-    body += "</ul><p>Log in to your Streamlit App to view the full matrix and track these picks.</p>"
-
-    msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = receiver_email
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'html'))
-
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Failed to send email: {e}")
-        return False
-
 # --- 5. APP HEADER ---
 st.markdown('<div class="omc-eyebrow">Institutional Coverage · Data Matrix</div>', unsafe_allow_html=True)
 st.markdown('<div class="omc-title">🏛️ Opportunity Scanner & Tracker</div>', unsafe_allow_html=True)
@@ -256,13 +215,6 @@ with tab1:
                         st.warning(f"You are already tracking {row['ticker']} (Pending).")
                         conn.close()
 
-        # --- NEW: EMAIL ALERT BUTTON ---
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("📧 Email Top 3 Picks to Myself"):
-            with st.spinner("Sending email..."):
-                if send_email_alert(top_3):
-                    st.success("✅ Email sent successfully! Check your inbox.")
-
         st.markdown("<hr style='margin:1.5em 0;'>", unsafe_allow_html=True)
         st.markdown(f"### 📋 Full Scanned Matrix - {selected_sector} (Top 100)")
         
@@ -271,7 +223,6 @@ with tab1:
 
 # --- 7. TAB 2: PERFORMANCE TRACKER ---
 with tab2:
-    # ... (Keep the exact same Performance Tracker code from your file)
     st.markdown("### 📈 Historical Performance")
     st.markdown("This table shows every stock you've ever tracked, including its exact metrics on the day you tracked it.")
     
@@ -328,6 +279,7 @@ with tab2:
             
         st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
         
+    # --- DANGER ZONE TO CLEAR TRACKER ---
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("### ⚠️ Danger Zone")
